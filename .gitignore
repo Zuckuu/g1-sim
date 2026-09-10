@@ -1,0 +1,44 @@
+# Local Isaac / Python environments (do not commit)
+env_isaaclab/
+IsaacLab/
+.venv/
+venv/
+env/
+
+# Vendor checkouts installed separately
+third_party/
+unitree_sdk2_python/
+
+# Secrets
+.env
+.env.*
+*.pem
+credentials.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Isaac / Omniverse
+.isaac/
+kit/
+logs/
+*.log
+videos/
+screenshots/
+
+# Large sim assets (download with fetch_assets.sh)
+unitree_sim_isaaclab/assets/
+unitree_sim_isaaclab/assets.*
+unitree_sim_isaaclab/unitree_sim_isaaclab_usds/
+unitree_sim_isaaclab/data/
+unitree_sim_isaaclab/**/__pycache__/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
