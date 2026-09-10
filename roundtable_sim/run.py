@@ -97,6 +97,8 @@ def screenshots(run_dir: Path, xml_path: Path, shots_dir: Path) -> None:
     if ev.get("release"):
         i = frame_at_time(run, ev["release"][0]["t"] + 0.6)
         save("06_placing_can_on_coaster.png", i, d.target(i)[1], pip=True)
+        i = frame_at_time(run, ev["release"][0]["t"] + 2.4)
+        save("06b_here_you_go.png", i, d.target(i)[1], pip=True)
     if ev.get("done"):
         i = frame_at_time(run, ev["done"][0]["t"] + 1.0)
         save("07_all_guests_served_overview.png", i, CamParams("overview"))

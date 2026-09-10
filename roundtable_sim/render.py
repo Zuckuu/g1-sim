@@ -114,6 +114,9 @@ class Director:
             fx, fy, fz = f["focus"]
             az_out = math.degrees(math.atan2(fy, fx))
             return phase, CamParams(None, (fx, fy, fz + 0.02), 1.45, az_out + 8.0, -33.0)
+        if phase == "farewell":  # 3/4 view from the robot's right: gesture in profile, can and guest in frame
+            return phase, CamParams(None, (x + 0.15 * math.cos(yaw), y + 0.15 * math.sin(yaw), 0.95), 2.0,
+                                    yaw_deg + 110.0, -20.0)
         return "follow", CamParams(None, (x, y, 0.8), 3.1, yaw_deg + 28.0, -17.0)
 
     def step(self, i: int, dt: float) -> CamParams:
@@ -163,6 +166,7 @@ PHASE_TEXT = {
     "ask": "taking the order",
     "grasp": "picking up the can",
     "place": "placing the can on the coaster",
+    "farewell": "drink served",
     "done": "all guests served",
 }
 
