@@ -103,23 +103,26 @@ def screenshots(run_dir: Path, xml_path: Path, shots_dir: Path) -> None:
         save("08_all_guests_served_topdown.png", i, CamParams("topdown"), overlays=False)
 
 
-def videos(run_dir: Path, xml_path: Path, which: set, workers: int, shadows: bool) -> None:
+def videos(run_dir: Path, xml_path: Path, which: list, workers: int, shadows: bool) -> None:
     from render import Run, frame_at_time, render_video
 
     run = Run.load(run_dir)
     n = len(run.frames)
-    if "director" in which:
-        render_video(run_dir, xml_path, run_dir / "g1_roundtable_service_2x.mp4", range(0, n, 2), style="director",
-                     pip=True, workers=workers, shadows=shadows)
-    if "firstguest" in which:
-        served = [e for e in run.events if e["kind"] == "served"]
-        t_end = served[0]["t"] + 5.0 if served else run.t[-1]
-        render_video(run_dir, xml_path, run_dir / "g1_roundtable_first_guest_1x.mp4",
-                     range(0, frame_at_time(run, t_end) + 1), style="director", pip=True, workers=workers,
-                     shadows=shadows)
-    if "overview" in which:
-        render_video(run_dir, xml_path, run_dir / "g1_roundtable_overview_4x.mp4", range(0, n, 4), style="overview",
-                     pip=False, workers=workers, title_seconds=2.0, shadows=shadows)
+    for name in which:
+        if name == "director":
+            render_video(run_dir, xml_path, run_dir / "g1_roundtable_service_2x.mp4", range(0, n, 2),
+                         style="director", pip=True, workers=workers, shadows=shadows)
+        elif name == "firstguest":
+            served = [e for e in run.events if e["kind"] == "served"]
+            t_end = served[0]["t"] + 5.0 if served else run.t[-1]
+            render_video(run_dir, xml_path, run_dir / "g1_roundtable_first_guest_1x.mp4",
+                         range(0, frame_at_time(run, t_end) + 1), style="director", pip=True, workers=workers,
+                         shadows=shadows)
+        elif name == "overview":
+            render_video(run_dir, xml_path, run_dir / "g1_roundtable_overview_4x.mp4", range(0, n, 4),
+                         style="overview", pip=False, workers=workers, title_seconds=2.0, shadows=shadows)
+        else:
+            raise SystemExit(f"unknown video '{name}' (use director, firstguest, overview or none)")
 
 
 def main() -> None:
@@ -153,7 +156,7 @@ def main() -> None:
         xml_path = write_scene(cfg)
     if not args.skip_shots:
         screenshots(out_dir, xml_path, out_dir / "screenshots")
-    which = {v.strip() for v in args.videos.split(",") if v.strip()} - {"none"}
+    which = [v.strip() for v in args.videos.split(",") if v.strip() and v.strip() != "none"]
     if which:
         videos(out_dir, xml_path, which, args.workers, shadows=not args.no_shadows)
 

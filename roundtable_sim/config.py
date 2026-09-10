@@ -51,11 +51,11 @@ class Layout:
     seat_height: float = 0.45
     first_guest_angle: float = math.radians(288.0)  # guest 0, others go counter-clockwise
     # Coaster where the can is placed: to the guest's right on the table edge
-    coaster_radius: float = 1.32
+    coaster_radius: float = 1.36
     coaster_angle_offset: float = math.radians(9.0)
     coaster_size: float = 0.05
     # Where the robot stands to talk to / serve a guest (in the gap to the guest's right)
-    serve_radius: float = 1.64
+    serve_radius: float = 1.62
     serve_angle_offset: float = math.radians(18.0)
     # "Ring road" the robot walks on around the chairs
     ring_radius: float = 2.75

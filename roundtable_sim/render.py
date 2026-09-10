@@ -87,7 +87,8 @@ class Director:
         self.style = style
         self.prev_mode: Optional[str] = None
         self.state: Optional[CamParams] = None
-        self.tau = 0.45  # seconds
+        self.tau = 0.45  # seconds, for look-at / distance / elevation
+        self.tau_az = 1.3  # slower azimuth so the camera does not whip around when the robot turns in place
 
     def target(self, i: int) -> Tuple[str, CamParams]:
         f = self.run.frames[i]
@@ -106,9 +107,9 @@ class Director:
             mid = ((x + gx) / 2, (y + gy) / 2, 1.0)
             az = math.degrees(math.atan2(gy, gx))  # look outward from the table towards the guest
             return "ask", CamParams(None, mid, 3.0, az + 12.0, -20.0)
-        if phase == "grasp":  # over the left shoulder: the arm reaches across the frame
+        if phase == "grasp":  # from the far side of the station, facing the robot: hand + can unobstructed
             fx, fy, fz = f["focus"]
-            return phase, CamParams(None, (fx, fy, fz + 0.02), 1.45, yaw_deg - 42.0, -27.0)
+            return phase, CamParams(None, (fx, fy, fz + 0.03), 0.95, yaw_deg + 150.0, -32.0)
         if phase == "place":  # from above the table centre looking out: coaster, hand, robot and guest all visible
             fx, fy, fz = f["focus"]
             az_out = math.degrees(math.atan2(fy, fx))
@@ -122,10 +123,11 @@ class Director:
             self.prev_mode = mode
             return tgt
         k = 1.0 - math.exp(-dt / self.tau)
+        k_az = 1.0 - math.exp(-dt / self.tau_az)
         s = self.state
         la = tuple(s.lookat[j] + (tgt.lookat[j] - s.lookat[j]) * k for j in range(3))
         self.state = CamParams(None, la, s.distance + (tgt.distance - s.distance) * k,
-                               _ang_lerp(s.azimuth, tgt.azimuth, k), s.elevation + (tgt.elevation - s.elevation) * k)
+                               _ang_lerp(s.azimuth, tgt.azimuth, k_az), s.elevation + (tgt.elevation - s.elevation) * k)
         self.prev_mode = mode
         return self.state
 

@@ -79,54 +79,56 @@ def make_turn(t0: float, pose: Pose2D, yaw_target: float, turn_speed: float) -> 
 
 
 def make_walk(t0: float, pose: Pose2D, waypoints: List[Tuple[float, float]], speed: float,
-              accel: float = 0.7) -> BaseTrajectory:
-    """Walk along a polyline (corners rounded) with a trapezoidal speed profile; heading = tangent."""
+              accel: float = 0.7, max_yaw_rate: float = 1.0) -> BaseTrajectory:
+    """Walk along a polyline (corners rounded); heading = path tangent.
+
+    The speed profile is limited by acceleration *and* by curvature (v <= yaw_rate / kappa),
+    so the robot slows down in corners instead of spinning while translating, which is
+    what a footstep gait can actually follow.
+    """
     pts = np.array([[pose[0], pose[1]]] + [list(w) for w in waypoints], float)
-    # drop consecutive duplicates
     keep = [0] + [i for i in range(1, len(pts)) if np.linalg.norm(pts[i] - pts[i - 1]) > 1e-4]
     pts = pts[keep]
     if len(pts) < 2:
         return make_turn(t0, pose, pose[2], 1.0)
-    path = _resample(_chaikin(pts, 3), 0.02)
+    ds = 0.02
+    path = _resample(_chaikin(pts, 4), ds)
+    if len(path) < 3:
+        return make_turn(t0, pose, pose[2], 1.0)
     seg = np.linalg.norm(np.diff(path, axis=0), axis=1)
     s = np.concatenate([[0.0], np.cumsum(seg)])
     total = s[-1]
-    # trapezoidal profile
-    d_acc = speed ** 2 / (2 * accel)
-    if 2 * d_acc >= total:
-        v_peak = math.sqrt(total * accel)
-        t_acc = v_peak / accel
-        T = 2 * t_acc
-        def dist(t):
-            if t < t_acc:
-                return 0.5 * accel * t * t
-            tt = T - t
-            return total - 0.5 * accel * tt * tt
-    else:
-        t_acc = speed / accel
-        t_cruise = (total - 2 * d_acc) / speed
-        T = 2 * t_acc + t_cruise
-        def dist(t):
-            if t < t_acc:
-                return 0.5 * accel * t * t
-            if t < t_acc + t_cruise:
-                return d_acc + speed * (t - t_acc)
-            tt = T - t
-            return total - 0.5 * accel * tt * tt
+    tang = np.unwrap(np.arctan2(np.gradient(path[:, 1]), np.gradient(path[:, 0])))
+    # curvature -> speed limit, smoothed a little so the limit is not spiky
+    kappa = np.abs(np.gradient(tang, s, edge_order=1))
+    kappa = np.convolve(kappa, np.ones(7) / 7.0, mode="same")
+    v_lim = np.minimum(speed, max_yaw_rate / np.maximum(kappa, 1e-6))
+    v_lim = np.maximum(v_lim, 0.12)
+    # forward/backward passes for the acceleration limit (v^2 = v0^2 + 2 a ds)
+    v = v_lim.copy()
+    v[0] = 0.0
+    for i in range(1, len(v)):
+        v[i] = min(v[i], math.sqrt(v[i - 1] ** 2 + 2 * accel * (s[i] - s[i - 1])))
+    v[-1] = 0.0
+    for i in range(len(v) - 2, -1, -1):
+        v[i] = min(v[i], math.sqrt(v[i + 1] ** 2 + 2 * accel * (s[i + 1] - s[i])))
+    # time along the path
+    t_path = np.zeros_like(s)
+    for i in range(1, len(s)):
+        vm = max(0.5 * (v[i] + v[i - 1]), 0.05)
+        t_path[i] = t_path[i - 1] + (s[i] - s[i - 1]) / vm
+    T = float(t_path[-1])
     ts = np.linspace(0.0, T, max(int(T * 100), 2))
-    ss = np.array([min(max(dist(t), 0.0), total) for t in ts])
+    ss = np.interp(ts, t_path, s)
     xs = np.interp(ss, s, path[:, 0])
     ys = np.interp(ss, s, path[:, 1])
-    # heading = tangent, rate limited (unwrapped)
-    tang = np.arctan2(np.gradient(path[:, 1]), np.gradient(path[:, 0]))
-    tang_s = np.interp(ss, s, np.unwrap(tang))
+    tang_s = np.interp(ss, s, tang)
     yaw = np.empty_like(ts)
-    yaw[0] = pose[2] + wrap_angle(tang_s[0] - pose[2]) * 0.0
-    max_rate = 2.0
+    yaw[0] = pose[2]
     for i in range(1, len(ts)):
         dt = ts[i] - ts[i - 1]
         err = wrap_angle(tang_s[i] - yaw[i - 1])
-        yaw[i] = yaw[i - 1] + np.clip(err, -max_rate * dt, max_rate * dt)
+        yaw[i] = yaw[i - 1] + np.clip(err, -1.6 * dt, 1.6 * dt)
     poses = np.stack([xs, ys, yaw], axis=1)
     return BaseTrajectory(t0, ts, poses)
 
@@ -250,20 +252,32 @@ class RoundTableScenario:
         R = L.ring_radius
         a0 = math.atan2(start_xy[1], start_xy[0])
         a1 = math.atan2(goal_xy[1], goal_xy[0])
-        pts: List[Tuple[float, float]] = []
         r0 = math.hypot(*start_xy)
         r1 = math.hypot(*goal_xy)
-        if abs(r0 - R) > 0.05:
-            pts.append((R * math.cos(a0), R * math.sin(a0)))
         da = wrap_angle(a1 - a0)
-        n = max(int(abs(da) / math.radians(8)), 1)
+        pts: List[Tuple[float, float]] = []
+        # Radial "spokes" only when we are well inside/outside the ring; when we are
+        # already close to it, blend the radius along the first part of the arc instead
+        # of taking a sharp corner.
+        near0 = abs(r0 - R) < 0.25
+        near1 = abs(r1 - R) < 0.25
+        if not near0:
+            pts.append((R * math.cos(a0), R * math.sin(a0)))
+        n = max(int(abs(da) / math.radians(6)), 1)
+        blend = min(math.radians(35), abs(da) * 0.5) if abs(da) > 1e-6 else 0.0
         for i in range(1, n + 1):
             a = a0 + da * i / n
-            pts.append((R * math.cos(a), R * math.sin(a)))
-        if abs(r1 - R) > 0.05:
+            r = R
+            if near0 and blend > 0:
+                k = min(abs(a - a0) / blend, 1.0)
+                r = r0 + (R - r0) * smoothstep(k)
+            if near1 and blend > 0:
+                k = min(abs(a1 - a) / blend, 1.0)
+                r = r + (r1 - R) * (1.0 - smoothstep(k)) if near0 else r1 + (R - r1) * smoothstep(k)
+            pts.append((r * math.cos(a), r * math.sin(a)))
+        if not near1 or math.hypot(pts[-1][0] - goal_xy[0], pts[-1][1] - goal_xy[1]) > 0.02:
             pts.append(goal_xy)
-        # drop points that are basically where we already are
-        return [p for p in pts if math.hypot(p[0] - start_xy[0], p[1] - start_xy[1]) > 0.08] or [goal_xy]
+        return [p for p in pts if math.hypot(p[0] - start_xy[0], p[1] - start_xy[1]) > 0.06] or [goal_xy]
 
     def go_to(self, goal: Pose2D) -> Generator:
         self.phase = "walk"

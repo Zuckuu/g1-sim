@@ -163,16 +163,17 @@ class IKTask:
 def solve_ik(robot: G1Model, q: np.ndarray, joints: Sequence[str], tasks: Sequence[IKTask],
              q_rest: Optional[np.ndarray] = None, joint_weights: Optional[np.ndarray] = None,
              iters: int = 6, damping: float = 5e-3, rest_gain: float = 0.3, max_step: float = 0.25,
-             tol: float = 1e-4) -> Tuple[np.ndarray, float]:
+             tol: float = 1e-4, ranges: Optional[np.ndarray] = None) -> Tuple[np.ndarray, float]:
     """Damped least squares IK on a subset of joints.
 
     ``q`` is the full robot qpos (modified in place and returned).  Joint weights
     < 1 make a joint "expensive" (used only when needed), which is how the waist
-    is kept mostly still while the arm reaches.
+    is kept mostly still while the arm reaches.  ``ranges`` (n x 2) overrides the
+    model's joint limits, e.g. to keep the elbow away from the straight-arm singularity.
     """
     qadr = robot.qadr(joints)
     vadr = robot.vadr(joints)
-    rng = robot.ranges(joints)
+    rng = robot.ranges(joints) if ranges is None else np.asarray(ranges, float)
     n = len(joints)
     w = np.ones(n) if joint_weights is None else np.asarray(joint_weights, float)
     err_norm = 0.0
@@ -232,6 +233,8 @@ class FootstepGait:
     STEP_HEIGHT = 0.065
     STEP_THRESH_POS = 0.025
     STEP_THRESH_YAW = 0.12
+    URGENT_POS = 0.20
+    URGENT_YAW = 0.55
     FOOT_OFFSET = {"left": np.array([0.0, 0.117]), "right": np.array([0.0, -0.117])}
 
     def __init__(self, base_xy_yaw: Tuple[float, float, float]):
@@ -272,7 +275,11 @@ class FootstepGait:
                 self.swing = None
                 self.swing_side = None
                 self.t_last_td = t
-        if self.swing is None and (t - self.t_last_td) >= self.T_DS:
+        # a foot that has fallen far behind the base must step *now* (skip double support)
+        urgent = self.swing is None and any(
+            self._error(side, base_now)[0] > self.URGENT_POS or self._error(side, base_now)[1] > self.URGENT_YAW
+            for side in SIDES)
+        if self.swing is None and ((t - self.t_last_td) >= self.T_DS or urgent):
             fut = base_at(t + self.T_SWING + self.LEAD)
             need = []
             for side in SIDES:
@@ -339,6 +346,10 @@ class ArmController:
         self.cart: Optional[dict] = None
         self.rest = np.array(ARM_STAND[side] + ([0.0, 0.0] if use_waist else []), float)
         self.last_ik_err = 0.0
+        self.ik_rate = 5.0  # rad/s cap on IK-driven joint motion (no pops if a solution flips)
+        # IK joint limits: model limits, but never a fully straight elbow (singular, flips branches)
+        self.ik_ranges = robot.ranges(self.ik_joints).copy()
+        self.ik_ranges[3, 0] = max(self.ik_ranges[3, 0], 0.35)
 
     # joint-space
     def set_pose(self, pose: Sequence[float], rate: float = 2.0) -> None:
@@ -381,8 +392,12 @@ class ArmController:
             p = c["p0"] + (c["p1"] - c["p0"]) * s
             R = mat_from_quat(slerp(c["q0"], c["q1"], s))
             task = IKTask(HAND_BODY[self.side], c["offset"], p, R, pos_weight=1.0, rot_weight=0.4)
+            ik_adr = self.robot.qadr(self.ik_joints)
+            q_prev = q[ik_adr].copy()
             _, self.last_ik_err = solve_ik(self.robot, q, self.ik_joints, [task], q_rest=self.rest,
-                                           joint_weights=self.weights, iters=5, rest_gain=0.15)
+                                           joint_weights=self.weights, iters=5, rest_gain=0.15,
+                                           ranges=self.ik_ranges)
+            q[ik_adr] = q_prev + np.clip(q[ik_adr] - q_prev, -self.ik_rate * dt, self.ik_rate * dt)
 
 
 class HandController:
@@ -413,6 +428,10 @@ class HandController:
 class G1Puppet:
     """Combines base trajectory, gait, arms and hands into one qpos vector per tick."""
 
+    # hip pitch joint relative to the pelvis origin, and the longest hip->ankle distance we allow
+    HIP_OFFSET = {"left": np.array([0.0, 0.064, -0.103]), "right": np.array([0.0, -0.064, -0.103])}
+    MAX_LEG_REACH = 0.615
+
     def __init__(self, model: mujoco.MjModel, pelvis_height: float, start_pose: Tuple[float, float, float]):
         self.robot = G1Model(model)
         self.pelvis_height = pelvis_height
@@ -431,6 +450,13 @@ class G1Puppet:
                      "right": ArmController(self.robot, "right", use_waist=True)}
         self.hands = {s: HandController(self.robot, s) for s in SIDES}
         self.leg_rest = {s: np.array([-0.25, 0.0, 0.0, 0.5, -0.25, 0.0]) for s in SIDES}
+        # IK joint limits for the legs: keep the knee at least slightly bent and the hip
+        # pitch/roll/yaw in the range a walking human uses (rules out the backwards branch)
+        self.leg_ranges = self.robot.ranges(LEG_JOINTS["left"]).copy()
+        self.leg_ranges[0] = [-1.6, 1.2]   # hip pitch
+        self.leg_ranges[1] = [-0.5, 0.5]   # hip roll (mirrored range is symmetric enough here)
+        self.leg_ranges[2] = [-1.2, 1.2]   # hip yaw
+        self.leg_ranges[3, 0] = 0.05       # knee
         self.arm_swing = 0.0  # amplitude of walking arm swing (rad)
         self.walking = False
 
@@ -463,13 +489,27 @@ class G1Puppet:
         q[3:7] = quat_yaw(yaw)
 
         # legs via IK on foot bodies
-        tasks_by_side = {}
+        pelvis_pos = q[0:3]
+        R_base = rot_z(yaw)
         for side in SIDES:
             pos, fyaw = feet[side]
-            tasks_by_side[side] = IKTask(FOOT_BODY[side], np.zeros(3), pos, rot_z(fyaw), pos_weight=1.0, rot_weight=0.5)
-        for side in SIDES:
-            solve_ik(self.robot, q, LEG_JOINTS[side], [tasks_by_side[side]], q_rest=self.leg_rest[side],
-                     iters=4, damping=2e-3, rest_gain=0.05, max_step=0.3)
+            # keep the target inside the leg's reach (hip pitch joint -> ankle), otherwise the
+            # damped IK ends up in a bent-backwards branch it cannot leave
+            hip = pelvis_pos + R_base @ (self.HIP_OFFSET[side])
+            vec = pos - hip
+            dist = np.linalg.norm(vec)
+            if dist > self.MAX_LEG_REACH:
+                pos = hip + vec * (self.MAX_LEG_REACH / dist)
+            task = IKTask(FOOT_BODY[side], np.zeros(3), pos, rot_z(fyaw), pos_weight=1.0, rot_weight=0.5)
+            qadr = self.robot.qadr(LEG_JOINTS[side])
+            _, err = solve_ik(self.robot, q, LEG_JOINTS[side], [task], q_rest=self.leg_rest[side],
+                              iters=4, damping=8e-3, rest_gain=0.05, max_step=0.3, ranges=self.leg_ranges)
+            knee = q[self.robot.jq[f"{side}_knee_joint"]]
+            if err > 0.03 or knee < 0.06:
+                # bad branch / stuck at the straight-leg limit: restart from the rest pose
+                q[qadr] = self.leg_rest[side]
+                solve_ik(self.robot, q, LEG_JOINTS[side], [task], q_rest=self.leg_rest[side],
+                         iters=12, damping=8e-3, rest_gain=0.05, max_step=0.3, ranges=self.leg_ranges)
 
         # arms
         ph = self.gait.phase
