@@ -15,7 +15,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from config import DIET, PEPSI, Guest, Layout, ScenarioConfig
-from fetch_assets import G1_DIR, fetch
+from fetch_assets import fetch
 
 GEN_DIR_NAME = "gen"  # textures + generated xml live inside the g1 folder so relative paths resolve
 SCENE_XML_NAME = "roundtable_scene.xml"
@@ -229,7 +229,7 @@ def _table(L: Layout) -> str:
         f'<geom name="table_top" type="cylinder" size="{R} {T / 2:.3f}" pos="0 0 {H - T / 2:.4f}" material="tablecloth" class="furniture"/>',
         f'<geom type="cylinder" size="{R + 0.01:.3f} 0.012" pos="0 0 {H - T - 0.012:.4f}" rgba="0.96 0.93 0.86 1" class="furniture"/>',
         f'<geom type="cylinder" size="0.22 {(H - T) / 2:.3f}" pos="0 0 {(H - T) / 2:.4f}" rgba="0.25 0.22 0.2 1" class="furniture"/>',
-        f'<geom type="cylinder" size="0.65 0.02" pos="0 0 0.02" rgba="0.25 0.22 0.2 1" class="furniture"/>',
+        '<geom type="cylinder" size="0.65 0.02" pos="0 0 0.02" rgba="0.25 0.22 0.2 1" class="furniture"/>',
         # centrepiece
         f'<geom type="cylinder" size="0.09 0.06" pos="0 0 {H + 0.06:.3f}" rgba="0.55 0.65 0.35 1" class="decor"/>',
         f'<geom type="sphere" size="0.16" pos="0 0 {H + 0.24:.3f}" rgba="0.36 0.55 0.28 1" class="decor"/>',
@@ -332,11 +332,11 @@ def build_scene_xml(cfg: ScenarioConfig, g1_dir: Path, lowpoly: bool = True) -> 
 
     materials = [
         f'<texture name="label_pepsi" type="2d" file="{GEN_DIR_NAME}/label_pepsi.png"/>',
-        f'<material name="label_pepsi" texture="label_pepsi" specular="0.6" shininess="0.6" reflectance="0.05"/>',
+        '<material name="label_pepsi" texture="label_pepsi" specular="0.6" shininess="0.6" reflectance="0.05"/>',
         f'<texture name="label_diet" type="2d" file="{GEN_DIR_NAME}/label_diet.png"/>',
-        f'<material name="label_diet" texture="label_diet" specular="0.6" shininess="0.6" reflectance="0.05"/>',
+        '<material name="label_diet" texture="label_diet" specular="0.6" shininess="0.6" reflectance="0.05"/>',
         f'<texture name="sign_drinks" type="cube" file="{GEN_DIR_NAME}/sign_drinks.png"/>',
-        f'<material name="sign_drinks" texture="sign_drinks"/>',
+        '<material name="sign_drinks" texture="sign_drinks"/>',
         '<texture name="tablecloth_tex" type="2d" builtin="checker" rgb1="0.95 0.92 0.85" rgb2="0.90 0.86 0.78" width="256" height="256"/>',
         '<material name="tablecloth" texture="tablecloth_tex" texrepeat="12 12" texuniform="true" reflectance="0.05"/>',
         '<texture name="floor_tex" type="2d" builtin="checker" mark="edge" rgb1="0.56 0.47 0.37" rgb2="0.52 0.43 0.34" markrgb="0.40 0.32 0.25" width="512" height="512"/>',
@@ -444,8 +444,6 @@ def load_model(cfg: ScenarioConfig, lowpoly: bool = True):
 
 
 if __name__ == "__main__":
-    import mujoco
-
     cfg = ScenarioConfig()
     m, p = load_model(cfg)
     print(f"wrote {p}: nq={m.nq} nbody={m.nbody} ngeom={m.ngeom} ncam={m.ncam}")

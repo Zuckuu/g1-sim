@@ -9,15 +9,15 @@ from __future__ import annotations
 import json
 import math
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, Generator, List, Optional, Tuple
+from typing import Callable, Generator, List, Optional, Tuple
 
 import mujoco
 import numpy as np
 
-from config import DIET, PEPSI, ScenarioConfig
-from g1_kinematics import (ARM_ASK, ARM_STAND, ARM_WALK, GRASP_OFFSET, HAND_BODY, NQ_ROBOT, NV_ROBOT, G1Puppet,
+from config import ScenarioConfig
+from g1_kinematics import (ARM_ASK, ARM_STAND, ARM_WALK, NQ_ROBOT, NV_ROBOT, G1Puppet,
                            mat_from_quat, quat_from_mat, rot_z, smoothstep, wrap_angle)
 
 Pose2D = Tuple[float, float, float]
