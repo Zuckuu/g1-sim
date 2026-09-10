@@ -48,10 +48,10 @@ On a machine without a display set `MUJOCO_GL=egl` (default here) or `MUJOCO_GL=
 
 | File | What |
 |---|---|
-| `g1_roundtable_service_2x.mp4` | director's cut of the entire run at 2x speed: follow cam, "ask" cam, over-the-shoulder grasp/place close-ups, overview picture-in-picture, dialog bubbles, HUD |
+| `g1_roundtable_service_2x.mp4` | director's cut of the entire run at 2x speed: follow cam, "ask" cam, grasp/place close-ups, 3/4 "here you go" shot, overview picture-in-picture, dialog bubbles, HUD |
 | `g1_roundtable_first_guest_1x.mp4` | the first guest end-to-end in real time |
 | `g1_roundtable_overview_4x.mp4` | fixed overview camera, 4x time-lapse of the whole service |
-| `screenshots/*.png` | scene overview, annotated top-down layout, asking, grasp close-up, hand detail, placing, final state |
+| `screenshots/*.png` | scene overview, annotated top-down layout, asking, grasp close-up, hand detail, placing, "here you go", final state |
 | `trajectory.npz`, `meta.json` | the recorded run (qpos at 30 Hz + phase/dialog metadata) — re-render with any camera without re-simulating |
 | `scenario_used.json` | the guests/layout used; copy, edit and pass with `--config` |
 
