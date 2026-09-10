@@ -97,7 +97,6 @@ def make_walk(t0: float, pose: Pose2D, waypoints: List[Tuple[float, float]], spe
         return make_turn(t0, pose, pose[2], 1.0)
     seg = np.linalg.norm(np.diff(path, axis=0), axis=1)
     s = np.concatenate([[0.0], np.cumsum(seg)])
-    total = s[-1]
     tang = np.unwrap(np.arctan2(np.gradient(path[:, 1]), np.gradient(path[:, 0])))
     # curvature -> speed limit, smoothed a little so the limit is not spiky
     kappa = np.abs(np.gradient(tang, s, edge_order=1))

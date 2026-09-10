@@ -31,8 +31,14 @@ Faster iterations:
 python run.py --out out/quick --guests 2 --videos firstguest   # one short video
 python run.py --out out/run --skip-sim --videos overview        # re-render an existing recording
 python run.py --out out/run --videos none                       # simulation + screenshots only
+python check_run.py out/run                                     # sanity-check a recording (see below)
 python run.py --view                                            # live MuJoCo viewer (needs a display)
 ```
+
+`check_run.py` replays a recording and fails if the puppet ever "breaks": joint jumps
+between frames, knees bent the wrong way, over-extended legs, feet under the floor, or a
+can that did not end up upright on its coaster. Run it after changing the layout or the
+controller before spending an hour on rendering.
 
 On a machine without a display set `MUJOCO_GL=egl` (default here) or `MUJOCO_GL=osmesa`.
 `ffmpeg` must be on the PATH for video encoding (`imageio-ffmpeg` ships one).
@@ -83,10 +89,12 @@ configuration (floating base + 43 joints) and MuJoCo only simulates the cans. Th
 trades physically-simulated balance for a deterministic demo that never falls over
 and runs 10x faster than real time on 4 CPU cores. Concretely:
 
-* **Locomotion** — the base follows a precomputed path (corners rounded, trapezoidal speed
-  profile, heading = path tangent). A footstep planner keeps both feet planted and swings one
-  foot at a time to where its nominal position *will* be shortly after touchdown, so the feet
-  never slide. Each foot pose is solved with 6-DoF leg IK. Turning in place steps as well.
+* **Locomotion** — the base follows a precomputed path (corners rounded, speed limited by
+  acceleration *and* path curvature so it slows down in corners, heading = path tangent).
+  A footstep planner keeps both feet planted and swings one foot at a time to where its
+  nominal position *will* be shortly after touchdown, so the feet never slide. Each foot pose
+  is solved with 6-DoF leg IK (targets clamped to the leg's reach, knee never straight, and a
+  restart from the rest pose if a solution goes bad). Turning in place steps as well.
 * **Reaching** — 7-DoF arm IK plus waist pitch/yaw (down-weighted so the torso only leans
   when the arm alone can't reach). Cartesian moves interpolate the hand pose from where it is
   to the goal (S-curve), so the hand travels in straight lines.
@@ -107,8 +115,10 @@ replacing `G1Puppet` with the RL locomotion policy plus the existing scripted gr
 
 ## Known limitations / next steps
 
-* Walking and balance are scripted, not physically simulated (no RL policy yet).
-* The grasp is a visual/kinematic attach, not friction-based; fingers may clip the can slightly.
+* Walking and balance are scripted, not physically simulated (no RL policy yet). The gait is
+  a brisk, slightly crouched walk (pelvis at 0.72 m) that keeps the legs away from singularities.
+* The grasp is a visual/kinematic attach, not friction-based; the finger meshes overlap the
+  can by a few millimetres in the closed pose.
 * Guests are stylised primitive-geometry people; the scene is a simple room.
 * Software rendering is slow (~0.3 s per 720p frame with shadows); use `--no-shadows`
   or `--videos overview` for quick looks.
