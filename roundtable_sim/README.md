@@ -1,9 +1,9 @@
 # Round-table drink service — G1 in MuJoCo (CPU only)
 
-A Unitree G1 (29 DoF + Dex3 three-finger hands) serves ten guests seated around a
-round table. It walks up to each guest, asks *"Pepsi or Diet Pepsi?"*, walks to a
-drink station, grabs the requested can with its right hand, carries it back and
-sets it down on the coaster next to that guest — ten times — then says goodbye.
+A Unitree G1 (29 DoF) fitted with **BrainCo Revo2** five-finger dexterous hands serves
+ten guests seated around a round table. It walks up to each guest, asks *"Pepsi or Diet
+Pepsi?"*, walks to a drink station, grabs the requested can with its right hand, carries
+it back and sets it down on the coaster next to that guest — ten times — then says goodbye.
 
 This runs **headless on a CPU-only machine** (no Isaac Sim, no NVIDIA GPU needed)
 and writes MP4 videos + screenshots, so you can review the behaviour without
@@ -12,7 +12,8 @@ running anything heavy on your own PC. It also runs interactively on a laptop.
 | | |
 |---|---|
 | Physics / renderer | [MuJoCo](https://mujoco.org) 3.x, software OpenGL (EGL/OSMesa/GLFW) |
-| Robot model | `unitree_g1/g1_with_hands.xml` from [MuJoCo Menagerie](https://github.com/google-deepmind/mujoco_menagerie) (BSD-3, downloaded on first run) |
+| Robot model | G1 body: `unitree_g1/g1_with_hands.xml` from [MuJoCo Menagerie](https://github.com/google-deepmind/mujoco_menagerie) (BSD-3); hands: `revo2_system/mjcf/revo2_{left,right}.xml` from [BrainCoTech/brainco-description](https://github.com/BrainCoTech/brainco-description). Both are downloaded on first run and combined into `g1_revo2.xml` by `scene.py` |
+| Hands | BrainCo Revo2, 11 joints per hand in the model (thumb metacarpal/proximal/distal + proximal/distal on four fingers; the real hand drives these with 6 motors) |
 | Control | kinematic "puppet": scripted base path, footstep gait + leg IK, arm IK, finger poses |
 | Cans | real rigid bodies — they are simulated, stand on the table, and fall if dropped |
 
@@ -73,7 +74,8 @@ Everything is data driven from `config.py`:
 ```
 config.py        guests + layout numbers (single source of truth)
 scene.py         builds the MJCF: room, table, chairs, stylised guests, name cards, coasters,
-                 station, 12 cans (free bodies), cameras, generated label textures; includes the G1
+                 station, 12 cans (free bodies), cameras, generated label textures; assembles the
+                 robot (Menagerie G1 with its Dex3 hands swapped for the Revo2 at the wrist flange)
 g1_kinematics.py G1Model (FK/jacobians), solve_ik (damped least squares + nullspace),
                  FootstepGait (plants/swings feet under a moving base), ArmController,
                  HandController, G1Puppet (assembles one qpos per tick)
@@ -82,11 +84,12 @@ scenario.py      the story: navigation via the ring road, ask/fetch/grasp/carry/
 render.py        offline renderer: Director (camera per phase), Pillow overlays, parallel chunked
                  encoding, screenshots, annotated top-down
 run.py           CLI
-fetch_assets.py  sparse-clones the Menagerie G1 model into assets/ (gitignored, ~36 MB)
+fetch_assets.py  sparse-clones the Menagerie G1 (~36 MB) and the BrainCo Revo2 description into
+                 assets/ (gitignored)
 ```
 
 The robot is **puppeteered**: every 4 ms tick the controller writes the full joint
-configuration (floating base + 43 joints) and MuJoCo only simulates the cans. That
+configuration (floating base + 51 joints) and MuJoCo only simulates the cans. That
 trades physically-simulated balance for a deterministic demo that never falls over
 and runs 10x faster than real time on 4 CPU cores. Concretely:
 
@@ -101,10 +104,17 @@ and runs 10x faster than real time on 4 CPU cores. Concretely:
   hand pose from where it is to the goal (S-curve), so the hand travels in straight lines. The
   elbow is kept short of the straight-arm singularity (in the G1 model `q=0` is a 90° bend and
   the arm is straight at about `+1.5 rad`), which rules out the hyper-extended IK branch.
-* **Grasp** — the Dex3 fingers close to a pose tuned around a 66 mm can (index/middle wrap the
-  front, thumb closes the side). Because the finger geometry is only visual here, the can is
-  attached to the hand frame once the fingers are closed and released again on the coaster
-  (3 mm drop, then physics takes over). Hand/robot geoms have collisions disabled.
+* **Grasp** — the Revo2 fingers close to a power-grasp pose tuned numerically around a 66 mm
+  can lying against the palm: the four fingers curl over the can's far side and the fully
+  opposed thumb presses the near side, so the pads face each other across the can. The Revo2's
+  fingers are about as long as the can is wide, so (as on the real hand) it is a partial wrap,
+  not a closed fist. Because the finger geometry is only visual here, the can is attached to
+  the hand frame once the fingers are closed and released again on the coaster (3 mm drop,
+  then physics takes over). Hand/robot geoms have collisions disabled.
+* **Hand mount** — the Revo2 MJCF is grafted onto each `*_wrist_yaw_link` at the flange where
+  the Dex3 palm used to be, behind an 8 mm adapter disc. The hand frame (+z along the fingers,
+  +x out of the palm, thumb on ±y) maps onto the wrist frame (+x along the fingers, palm towards
+  the body's midline, thumb up) with a pure axis permutation, so no measured offsets are needed.
 * **Dialogue** — text bubbles in the video, driven by `say()` events in the script.
 
 ## Relation to the Isaac Sim setup in this repo
