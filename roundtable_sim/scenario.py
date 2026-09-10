@@ -433,10 +433,11 @@ class RoundTableScenario:
             # let go: straight up off the can, then pull the hand back to the chest (joint space,
             # so the hand path is predictable) and keep it there while talking; walk() lowers it
             yield from self.arm_move(target + np.array([0, 0, 0.08]), Rg, 0.5)
-            self.phase = "farewell"
-            self.puppet.arms["right"].set_pose(ARM_TUCK["right"], rate=2.5)
+            self.puppet.arms["right"].set_pose(ARM_TUCK["right"], rate=1.6)
             self.puppet.swing_right = True
             self.arm_tucked = True
+            yield from self.wait(0.45)  # let the gesture settle before the camera cuts
+            self.phase = "farewell"
             yield from self.say("robot", f"Here you go, {g.name}. Enjoy!", 1.6)
             yield from self.say("guest", "Thank you!", 1.2)
             yield from self.wait(0.3)
