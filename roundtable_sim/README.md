@@ -116,7 +116,9 @@ replacing `G1Puppet` with the RL locomotion policy plus the existing scripted gr
 ## Known limitations / next steps
 
 * Walking and balance are scripted, not physically simulated (no RL policy yet). The gait is
-  a brisk, slightly crouched walk (pelvis at 0.72 m) that keeps the legs away from singularities.
+  a brisk, slightly crouched walk (pelvis at 0.74 m) that keeps the legs away from singularities;
+  in-place turns are deliberately slow (0.7 rad/s) so they read as steps rather than a spin,
+  especially in the 4x time-lapse.
 * The grasp is a visual/kinematic attach, not friction-based; the finger meshes overlap the
   can by a few millimetres in the closed pose.
 * Guests are stylised primitive-geometry people; the scene is a simple room.

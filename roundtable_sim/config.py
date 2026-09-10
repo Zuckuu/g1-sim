@@ -75,7 +75,7 @@ class Layout:
     # Robot
     pelvis_height: float = 0.74
     walk_speed: float = 0.55
-    turn_speed: float = 1.2
+    turn_speed: float = 0.7  # in-place turns (rad/s, average); peak is 1.5x with the smoothstep profile
     # Simulation
     timestep: float = 0.004
     record_fps: int = 30

@@ -79,7 +79,7 @@ def make_turn(t0: float, pose: Pose2D, yaw_target: float, turn_speed: float) -> 
 
 
 def make_walk(t0: float, pose: Pose2D, waypoints: List[Tuple[float, float]], speed: float,
-              accel: float = 0.7, max_yaw_rate: float = 1.0) -> BaseTrajectory:
+              accel: float = 0.7, max_yaw_rate: float = 0.8) -> BaseTrajectory:
     """Walk along a polyline (corners rounded); heading = path tangent.
 
     The speed profile is limited by acceleration *and* by curvature (v <= yaw_rate / kappa),
@@ -127,7 +127,7 @@ def make_walk(t0: float, pose: Pose2D, waypoints: List[Tuple[float, float]], spe
     for i in range(1, len(ts)):
         dt = ts[i] - ts[i - 1]
         err = wrap_angle(tang_s[i] - yaw[i - 1])
-        yaw[i] = yaw[i - 1] + np.clip(err, -1.6 * dt, 1.6 * dt)
+        yaw[i] = yaw[i - 1] + np.clip(err, -1.2 * dt, 1.2 * dt)
     poses = np.stack([xs, ys, yaw], axis=1)
     return BaseTrajectory(t0, ts, poses)
 
