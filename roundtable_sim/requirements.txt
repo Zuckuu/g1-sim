@@ -1,0 +1,7 @@
+mujoco>=3.2,<4
+numpy>=1.26
+imageio>=2.34
+imageio-ffmpeg>=0.5
+pillow>=10.0
+trimesh>=4.0
+fast-simplification>=0.1.7

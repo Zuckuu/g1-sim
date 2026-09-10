@@ -42,3 +42,7 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# Round-table MuJoCo sim: downloaded model + generated media
+roundtable_sim/assets/
+roundtable_sim/out/
