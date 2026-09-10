@@ -1,0 +1,203 @@
+{
+  "unitree_sim_isaaclab": {
+    "url": "https://github.com/unitreerobotics/unitree_sim_isaaclab",
+    "commit": "e30c25b1dffdf92ada1d6c8c1fe9a47bdde0fecc",
+    "checkout": "sparse; dependencies and USD assets not installed"
+  },
+  "xr_teleoperate": {
+    "url": "https://github.com/unitreerobotics/xr_teleoperate",
+    "commit": "817fb00c63cde15e5f24a0f8fa08e1e33ed89d3b",
+    "checkout": "sparse; submodules and dependencies not installed"
+  },
+  "bottle_dataset": {
+    "url": "https://huggingface.co/datasets/unitreerobotics/G1_Dex3_PickBottle_Dataset",
+    "revision": "0fd1b41373de4a4b43d7fa692b4c79084f682e42",
+    "metadata": {
+      "codebase_version": "v3.0",
+      "robot_type": "Unitree_G1_Dex3",
+      "total_episodes": 202,
+      "total_frames": 176774,
+      "total_tasks": 1,
+      "chunks_size": 1000,
+      "fps": 30.0,
+      "splits": {
+        "train": "0:202"
+      },
+      "data_path": "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet",
+      "video_path": "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4",
+      "features": {
+        "observation.state": {
+          "dtype": "float32",
+          "shape": [
+            28
+          ],
+          "names": [
+            [
+              "kLeftShoulderPitch",
+              "kLeftShoulderRoll",
+              "kLeftShoulderYaw",
+              "kLeftElbow",
+              "kLeftWristRoll",
+              "kLeftWristPitch",
+              "kLeftWristYaw",
+              "kRightShoulderPitch",
+              "kRightShoulderRoll",
+              "kRightShoulderYaw",
+              "kRightElbow",
+              "kRightWristRoll",
+              "kRightWristPitch",
+              "kRightWristYaw",
+              "kLeftHandThumb0",
+              "kLeftHandThumb1",
+              "kLeftHandThumb2",
+              "kLeftHandMiddle0",
+              "kLeftHandMiddle1",
+              "kLeftHandIndex0",
+              "kLeftHandIndex1",
+              "kRightHandThumb0",
+              "kRightHandThumb1",
+              "kRightHandThumb2",
+              "kRightHandIndex0",
+              "kRightHandIndex1",
+              "kRightHandMiddle0",
+              "kRightHandMiddle1"
+            ]
+          ],
+          "fps": 30.0
+        },
+        "action": {
+          "dtype": "float32",
+          "shape": [
+            28
+          ],
+          "names": [
+            [
+              "kLeftShoulderPitch",
+              "kLeftShoulderRoll",
+              "kLeftShoulderYaw",
+              "kLeftElbow",
+              "kLeftWristRoll",
+              "kLeftWristPitch",
+              "kLeftWristYaw",
+              "kRightShoulderPitch",
+              "kRightShoulderRoll",
+              "kRightShoulderYaw",
+              "kRightElbow",
+              "kRightWristRoll",
+              "kRightWristPitch",
+              "kRightWristYaw",
+              "kLeftHandThumb0",
+              "kLeftHandThumb1",
+              "kLeftHandThumb2",
+              "kLeftHandMiddle0",
+              "kLeftHandMiddle1",
+              "kLeftHandIndex0",
+              "kLeftHandIndex1",
+              "kRightHandThumb0",
+              "kRightHandThumb1",
+              "kRightHandThumb2",
+              "kRightHandIndex0",
+              "kRightHandIndex1",
+              "kRightHandMiddle0",
+              "kRightHandMiddle1"
+            ]
+          ],
+          "fps": 30.0
+        },
+        "observation.images.cam_left_high": {
+          "dtype": "video",
+          "shape": [
+            480,
+            640,
+            3
+          ],
+          "names": [
+            "height",
+            "width",
+            "channel"
+          ],
+          "info": {
+            "video.height": 480,
+            "video.width": 640,
+            "video.codec": "av1",
+            "video.pix_fmt": "yuv420p",
+            "video.is_depth_map": false,
+            "video.fps": 30,
+            "video.channels": 3,
+            "has_audio": false
+          }
+        },
+        "observation.images.cam_right_high": {
+          "dtype": "video",
+          "shape": [
+            480,
+            640,
+            3
+          ],
+          "names": [
+            "height",
+            "width",
+            "channel"
+          ],
+          "info": {
+            "video.height": 480,
+            "video.width": 640,
+            "video.codec": "av1",
+            "video.pix_fmt": "yuv420p",
+            "video.is_depth_map": false,
+            "video.fps": 30,
+            "video.channels": 3,
+            "has_audio": false
+          }
+        },
+        "timestamp": {
+          "dtype": "float32",
+          "shape": [
+            1
+          ],
+          "names": null,
+          "fps": 30.0
+        },
+        "frame_index": {
+          "dtype": "int64",
+          "shape": [
+            1
+          ],
+          "names": null,
+          "fps": 30.0
+        },
+        "episode_index": {
+          "dtype": "int64",
+          "shape": [
+            1
+          ],
+          "names": null,
+          "fps": 30.0
+        },
+        "index": {
+          "dtype": "int64",
+          "shape": [
+            1
+          ],
+          "names": null,
+          "fps": 30.0
+        },
+        "task_index": {
+          "dtype": "int64",
+          "shape": [
+            1
+          ],
+          "names": null,
+          "fps": 30.0
+        }
+      },
+      "data_files_size_in_mb": 100,
+      "video_files_size_in_mb": 500
+    }
+  },
+  "bottle_checkpoint_candidate": {
+    "url": "https://huggingface.co/SII-Linzy/groot-g1-sonic-grab-bottle-deploy-checkpoint-10000",
+    "revision": "5fdb36c78c88b9cc3a2c584fcd8993e9955b2384",
+    "status": "model card inspected; weights not downloaded; author reports sim-only 5/10 single-bottle success"
+  }
+}

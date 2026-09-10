@@ -1,0 +1,11 @@
+{
+  "phase_log": [
+    {
+      "phase": "walk",
+      "t": 2.02
+    }
+  ],
+  "fixed_base": false,
+  "bottle": "pepsi-20oz",
+  "hand": "right"
+}

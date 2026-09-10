@@ -1,0 +1,107 @@
+{
+  "hand": "right",
+  "model": "official-urdf",
+  "usd": "/home/nicholas/Projects/PepsiDemo/work/g1-runtime/usd/brainco_hand/revo2_right_official-urdf_convex_decomposition.usd",
+  "tag": "best-500ml",
+  "bottle": {
+    "radius": 0.0325,
+    "height": 0.22,
+    "mass": 0.55,
+    "friction": 0.9
+  },
+  "targets": {
+    "close_fingers": 0.9,
+    "close_thumb": 0.75,
+    "thumb_aux": 0.9
+  },
+  "drive": {
+    "stiffness": 6.0,
+    "damping": 0.3
+  },
+  "joint_names": [
+    "right_index_proximal_joint",
+    "right_middle_proximal_joint",
+    "right_pinky_proximal_joint",
+    "right_ring_proximal_joint",
+    "right_thumb_metacarpal_joint",
+    "right_index_distal_joint",
+    "right_middle_distal_joint",
+    "right_pinky_distal_joint",
+    "right_ring_distal_joint",
+    "right_thumb_proximal_joint",
+    "right_thumb_distal_joint"
+  ],
+  "q_close_cmd": [
+    1.2690000534057617,
+    1.2690000534057617,
+    1.2690000534057617,
+    1.2690000534057617,
+    1.4129999876022339,
+    1.4656950235366821,
+    1.4656950235366821,
+    1.4656950235366821,
+    1.4656950235366821,
+    0.7724999785423279,
+    0.7724999785423279
+  ],
+  "palm_center_world": [
+    0.0,
+    0.0,
+    1.0
+  ],
+  "frame_note": "palm normal -> +X, index->pinky -> -Z, open fingers -> -Y",
+  "trials": [
+    {
+      "label": "t00",
+      "gap": 0.034,
+      "distal_offset": 0.035,
+      "vertical_offset": 0.0,
+      "bottle_center_init": [
+        0.0665,
+        -0.035,
+        1.0
+      ],
+      "held": true,
+      "status": "held",
+      "n_blocked": 4,
+      "drop_m": 0.00023627281188964844,
+      "max_tilt_deg": 15.38208065370657,
+      "closed_state": {
+        "target_minus_actual": {
+          "right_index_proximal_joint": 1.269,
+          "right_middle_proximal_joint": 1.152,
+          "right_ring_proximal_joint": 1.138,
+          "right_pinky_proximal_joint": 0.001,
+          "right_thumb_metacarpal_joint": 0.008,
+          "right_thumb_proximal_joint": 0.773
+        },
+        "bottle_pos": [
+          0.06633375585079193,
+          -0.01964372582733631,
+          1.0074939727783203
+        ],
+        "bottle_tilt_deg": 13.572136871712353
+      },
+      "final_joint_pos": [
+        -1.923798117786646e-05,
+        0.1221664696931839,
+        1.2676326036453247,
+        0.14287815988063812,
+        1.391888976097107,
+        1.3415814638137817,
+        1.3171583414077759,
+        1.475074291229248,
+        1.3740969896316528,
+        -0.00024855395895428956,
+        0.4731740951538086
+      ]
+    }
+  ],
+  "snapshots": [
+    "/home/nicholas/Projects/PepsiDemo/work/g1-runtime/logs/revo2-right-20260909-223735-t00-open.png",
+    "/home/nicholas/Projects/PepsiDemo/work/g1-runtime/logs/revo2-right-20260909-223735-t00-closed.png",
+    "/home/nicholas/Projects/PepsiDemo/work/g1-runtime/logs/revo2-right-20260909-223735-t00-after-lower.png"
+  ],
+  "n_held": 1,
+  "n_trials": 1
+}

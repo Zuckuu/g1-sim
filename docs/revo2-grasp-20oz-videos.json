@@ -1,0 +1,268 @@
+{
+  "hand": "right",
+  "model": "official-urdf",
+  "usd": "/home/nicholas/Projects/PepsiDemo/work/g1-runtime/usd/brainco_hand/revo2_right_official-urdf_convex_decomposition.usd",
+  "tag": "20oz-final-videos",
+  "bottle": {
+    "name": "pepsi-20oz",
+    "kind": "mesh",
+    "radius_at_grasp": 0.032760004338011,
+    "height": 0.2224,
+    "mass": 0.64,
+    "grasp_height": 0.1,
+    "friction": 0.9,
+    "mesh": "/home/nicholas/Projects/PepsiDemo/work/g1-runtime/usd/bottles/pepsi-20oz.obj"
+  },
+  "targets": {
+    "close_fingers": 0.9,
+    "close_thumb": 0.75,
+    "thumb_aux": 0.9
+  },
+  "drive": {
+    "stiffness": 6.0,
+    "damping": 0.3,
+    "close_seconds": 0.7
+  },
+  "joint_names": [
+    "right_index_proximal_joint",
+    "right_middle_proximal_joint",
+    "right_pinky_proximal_joint",
+    "right_ring_proximal_joint",
+    "right_thumb_metacarpal_joint",
+    "right_index_distal_joint",
+    "right_middle_distal_joint",
+    "right_pinky_distal_joint",
+    "right_ring_distal_joint",
+    "right_thumb_proximal_joint",
+    "right_thumb_distal_joint"
+  ],
+  "q_close_cmd": [
+    1.2690000534057617,
+    1.2690000534057617,
+    1.2690000534057617,
+    1.2690000534057617,
+    1.4129999876022339,
+    1.4656950235366821,
+    1.4656950235366821,
+    1.4656950235366821,
+    1.4656950235366821,
+    0.7724999785423279,
+    0.7724999785423279
+  ],
+  "palm_center_world": [
+    0.0,
+    0.0,
+    1.0
+  ],
+  "frame_note": "palm normal -> +X, index->pinky -> -Z, open fingers -> -Y",
+  "coupling": "linkage",
+  "trials": [
+    {
+      "label": "t00",
+      "gap": 0.034,
+      "distal_offset": 0.04,
+      "vertical_offset": 0.0,
+      "bottle_center_init": [
+        0.066760004338011,
+        -0.04,
+        0.9
+      ],
+      "held": true,
+      "status": "held",
+      "n_blocked": 4,
+      "drop_m": 6.973743438720703e-06,
+      "max_tilt_deg": 8.438851452853513,
+      "closed_state": {
+        "target_minus_actual": {
+          "right_index_proximal_joint": 0.755,
+          "right_middle_proximal_joint": 0.705,
+          "right_ring_proximal_joint": 0.7,
+          "right_pinky_proximal_joint": 0.001,
+          "right_thumb_metacarpal_joint": -0.078,
+          "right_thumb_proximal_joint": 0.773
+        },
+        "bottle_pos": [
+          0.08486964553594589,
+          -0.015466960147023201,
+          0.905137836933136
+        ],
+        "bottle_tilt_deg": 8.438806880647011
+      },
+      "final_joint_pos": [
+        0.5140523910522461,
+        0.5643301010131836,
+        1.2683039903640747,
+        0.5690564513206482,
+        1.4910674095153809,
+        0.4899155795574188,
+        0.5150572657585144,
+        1.472521185874939,
+        0.5266003608703613,
+        -0.0007717844564467669,
+        -2.17533169255546e-09
+      ],
+      "media": {
+        "mp4": "/home/nicholas/Projects/PepsiDemo/work/g1-runtime/logs/revo2-right-20260909-231829-t00.mp4",
+        "gif": "/home/nicholas/Projects/PepsiDemo/work/g1-runtime/logs/revo2-right-20260909-231829-t00.gif",
+        "joints_csv": "/home/nicholas/Projects/PepsiDemo/work/g1-runtime/logs/revo2-right-20260909-231829-t00-joints.csv"
+      },
+      "coupling": "linkage"
+    },
+    {
+      "label": "t01",
+      "gap": 0.034,
+      "distal_offset": 0.045,
+      "vertical_offset": 0.0,
+      "bottle_center_init": [
+        0.066760004338011,
+        -0.045,
+        0.9
+      ],
+      "held": false,
+      "status": "dropped",
+      "n_blocked": 2,
+      "drop_m": 0.12733006477355957,
+      "max_tilt_deg": 90.00005241075294,
+      "closed_state": {
+        "target_minus_actual": {
+          "right_index_proximal_joint": 0.007,
+          "right_middle_proximal_joint": 0.194,
+          "right_ring_proximal_joint": 0.081,
+          "right_pinky_proximal_joint": 0.001,
+          "right_thumb_metacarpal_joint": -0.14,
+          "right_thumb_proximal_joint": 0.392
+        },
+        "bottle_pos": [
+          0.1006598100066185,
+          0.0005673468112945557,
+          0.9137862920761108
+        ],
+        "bottle_tilt_deg": 35.39279196489154
+      },
+      "final_joint_pos": [
+        1.2615653276443481,
+        1.2629730701446533,
+        1.2683039903640747,
+        1.2653617858886719,
+        1.4839568138122559,
+        1.445879340171814,
+        1.4532537460327148,
+        1.472521185874939,
+        1.4633593559265137,
+        0.7924222350120544,
+        0.7935270071029663
+      ],
+      "media": {
+        "mp4": "/home/nicholas/Projects/PepsiDemo/work/g1-runtime/logs/revo2-right-20260909-231829-t01.mp4",
+        "gif": "/home/nicholas/Projects/PepsiDemo/work/g1-runtime/logs/revo2-right-20260909-231829-t01.gif",
+        "joints_csv": "/home/nicholas/Projects/PepsiDemo/work/g1-runtime/logs/revo2-right-20260909-231829-t01-joints.csv"
+      },
+      "coupling": "linkage"
+    },
+    {
+      "label": "t02",
+      "gap": 0.038,
+      "distal_offset": 0.04,
+      "vertical_offset": 0.0,
+      "bottle_center_init": [
+        0.070760004338011,
+        -0.04,
+        0.9
+      ],
+      "held": false,
+      "status": "dropped",
+      "n_blocked": 3,
+      "drop_m": 0.12169438600540161,
+      "max_tilt_deg": 90.00313655666642,
+      "closed_state": {
+        "target_minus_actual": {
+          "right_index_proximal_joint": 0.007,
+          "right_middle_proximal_joint": 0.494,
+          "right_ring_proximal_joint": 0.397,
+          "right_pinky_proximal_joint": 0.001,
+          "right_thumb_metacarpal_joint": -0.033,
+          "right_thumb_proximal_joint": 0.726
+        },
+        "bottle_pos": [
+          0.09608129411935806,
+          0.0013353396207094193,
+          0.9078129529953003
+        ],
+        "bottle_tilt_deg": 20.14264105552645
+      },
+      "final_joint_pos": [
+        1.261566400527954,
+        1.2629730701446533,
+        1.2683042287826538,
+        1.2653617858886719,
+        1.4839568138122559,
+        1.445880651473999,
+        1.4532537460327148,
+        1.4725216627120972,
+        1.4633593559265137,
+        0.7924222350120544,
+        0.7935270071029663
+      ],
+      "media": {
+        "mp4": "/home/nicholas/Projects/PepsiDemo/work/g1-runtime/logs/revo2-right-20260909-231829-t02.mp4",
+        "gif": "/home/nicholas/Projects/PepsiDemo/work/g1-runtime/logs/revo2-right-20260909-231829-t02.gif",
+        "joints_csv": "/home/nicholas/Projects/PepsiDemo/work/g1-runtime/logs/revo2-right-20260909-231829-t02-joints.csv"
+      },
+      "coupling": "linkage"
+    },
+    {
+      "label": "t03",
+      "gap": 0.038,
+      "distal_offset": 0.045,
+      "vertical_offset": 0.0,
+      "bottle_center_init": [
+        0.070760004338011,
+        -0.045,
+        0.9
+      ],
+      "held": false,
+      "status": "dropped",
+      "n_blocked": 0,
+      "drop_m": 0.14877700805664062,
+      "max_tilt_deg": 90.00493687022296,
+      "closed_state": {
+        "target_minus_actual": {
+          "right_index_proximal_joint": 0.007,
+          "right_middle_proximal_joint": 0.004,
+          "right_ring_proximal_joint": 0.003,
+          "right_pinky_proximal_joint": 0.001,
+          "right_thumb_metacarpal_joint": -0.075,
+          "right_thumb_proximal_joint": -0.025
+        },
+        "bottle_pos": [
+          0.1114427000284195,
+          -0.03577086329460144,
+          0.9351174831390381
+        ],
+        "bottle_tilt_deg": 83.95391612060082
+      },
+      "final_joint_pos": [
+        1.261567234992981,
+        1.2629730701446533,
+        1.2683039903640747,
+        1.2653617858886719,
+        1.4839568138122559,
+        1.4458816051483154,
+        1.4532537460327148,
+        1.4725213050842285,
+        1.4633593559265137,
+        0.7924222350120544,
+        0.7935270071029663
+      ],
+      "media": {
+        "mp4": "/home/nicholas/Projects/PepsiDemo/work/g1-runtime/logs/revo2-right-20260909-231829-t03.mp4",
+        "gif": "/home/nicholas/Projects/PepsiDemo/work/g1-runtime/logs/revo2-right-20260909-231829-t03.gif",
+        "joints_csv": "/home/nicholas/Projects/PepsiDemo/work/g1-runtime/logs/revo2-right-20260909-231829-t03-joints.csv"
+      },
+      "coupling": "linkage"
+    }
+  ],
+  "snapshots": [],
+  "n_held": 1,
+  "n_trials": 4
+}

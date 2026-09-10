@@ -1,3 +1,6 @@
+# PepsiDemo runtime (venv, Isaac Lab checkout, downloads, USD cache)
+work/
+
 # Local Isaac / Python environments (do not commit)
 env_isaaclab/
 IsaacLab/
