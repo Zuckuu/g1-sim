@@ -40,6 +40,8 @@ ARM_STAND = {"left": [0.2, 0.2, 0.0, 1.28, 0.0, 0.0, 0.0], "right": [0.2, -0.2, 
 ARM_WALK = {"left": [0.25, 0.18, 0.0, 0.65, 0.0, 0.0, 0.0], "right": [0.25, -0.18, 0.0, 0.65, 0.0, 0.0, 0.0]}
 # "which one would you like?" presenting gesture (right arm), palm up-ish
 ARM_ASK = {"right": [-0.55, -0.35, 0.35, 1.25, 0.9, 0.2, 0.0]}
+# hand pulled back in front of the chest after setting a can down (elbow flexed, forearm up)
+ARM_TUCK = {"right": [0.4, -0.2, 0.0, -0.6, 0.3, 0.1, 0.0]}
 # hand joint order: thumb_0, thumb_1, thumb_2, index_0, index_1, middle_0, middle_1
 HAND_OPEN = {"left": [0.0] * 7, "right": [0.0] * 7}
 HAND_CLOSED_CAN = {"right": [0.0, -0.30, -0.50, 0.25, 1.20, 0.25, 1.20],
@@ -464,6 +466,7 @@ class G1Puppet:
         self.leg_ranges[2] = [-1.2, 1.2]   # hip yaw
         self.leg_ranges[3, 0] = 0.05       # knee
         self.arm_swing = 0.0  # amplitude of walking arm swing (rad)
+        self.swing_right = True  # False while carrying a can: keep the drink steady
         self.walking = False
 
     # -- base -------------------------------------------------------------------------
@@ -520,7 +523,7 @@ class G1Puppet:
         # arms
         ph = self.gait.phase
         swing_l = self.arm_swing * math.sin(ph)     # left arm forward while right leg swings
-        swing_r = -self.arm_swing * math.sin(ph)
+        swing_r = -self.arm_swing * math.sin(ph) if self.swing_right else 0.0
         self.arms["left"].update(q, t, dt, pose_offset=np.array([swing_l, 0, 0, 0, 0, 0, 0]))
         self.arms["right"].update(q, t, dt, pose_offset=np.array([swing_r, 0, 0, 0, 0, 0, 0]))
         for side in SIDES:

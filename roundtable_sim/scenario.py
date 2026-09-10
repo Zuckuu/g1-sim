@@ -17,7 +17,7 @@ import mujoco
 import numpy as np
 
 from config import ScenarioConfig
-from g1_kinematics import (ARM_ASK, ARM_STAND, ARM_WALK, NQ_ROBOT, NV_ROBOT, G1Puppet,
+from g1_kinematics import (ARM_ASK, ARM_STAND, ARM_TUCK, ARM_WALK, NQ_ROBOT, NV_ROBOT, G1Puppet,
                            mat_from_quat, quat_from_mat, rot_z, smoothstep, wrap_angle)
 
 Pose2D = Tuple[float, float, float]
@@ -167,6 +167,7 @@ class RoundTableScenario:
             self.can_info.append((f"can_{k}", kind, int(model.jnt_qposadr[j]), int(model.jnt_dofadr[j]), g))
         self.can_taken = [False] * len(self.can_info)
         self.attached: Optional[dict] = None
+        self.arm_tucked = False  # right hand parked at the chest after serving; lowered by walk()
         # narrative state
         self.phase = "idle"
         self.guest = -1
@@ -235,7 +236,13 @@ class RoundTableScenario:
                 pose = self.base_now()
         self.puppet.arm_swing = 0.22
         self.traj = make_walk(self.t, pose, waypoints, self.L.walk_speed)
+        start_xy = np.array(pose[:2])
         while self.t < self.traj.t_end:
+            # a hand tucked in after serving drops to the walking pose only once we have
+            # turned and moved away from the table, so it cannot sweep through the table top
+            if self.arm_tucked and np.linalg.norm(np.array(self.base_now()[:2]) - start_xy) > 0.25:
+                self.puppet.arms["right"].set_pose(ARM_WALK["right"], rate=2.0)
+                self.arm_tucked = False
             yield
         self.hold_pose = self.traj.pose(self.traj.t_end)
         self.traj = None
@@ -399,6 +406,7 @@ class RoundTableScenario:
             yield from self.arm_move(cpos, Rg, 0.8)
             yield from self.hand_close()
             self.attach_can(k)
+            self.puppet.swing_right = False
             yield from self.wait(0.3)
             yield from self.arm_move(cpos + np.array([0, 0, 0.12]), Rg, 0.7)
             # carry pose: can held in front of the chest (elbow flexed), clear of the table top
@@ -414,7 +422,6 @@ class RoundTableScenario:
             self.phase = "place"
             bx, by, byaw = self.base_now()
             Rg = rot_z(byaw)
-            fwd = np.array([math.cos(byaw), math.sin(byaw), 0.0])
             target = np.array([cx, cy, cz + L.can_half_height + 0.006 + 0.003])
             yield from self.arm_move(target + np.array([0, 0, 0.10]), Rg, 1.3)
             yield from self.arm_move(target, Rg, 0.8)
@@ -423,11 +430,15 @@ class RoundTableScenario:
             self.served.append(i)
             self.log("served", guest=i, name=g.name, order=g.order)
             yield from self.wait(0.25)
-            yield from self.arm_move(target + np.array([0, 0, 0.08]) - 0.10 * fwd, Rg, 0.8)
+            # let go: straight up off the can, then pull the hand back to the chest (joint space,
+            # so the hand path is predictable) and keep it there while talking; walk() lowers it
+            yield from self.arm_move(target + np.array([0, 0, 0.08]), Rg, 0.5)
+            self.puppet.arms["right"].set_pose(ARM_TUCK["right"], rate=2.5)
+            self.puppet.swing_right = True
+            self.arm_tucked = True
             yield from self.say("robot", f"Here you go, {g.name}. Enjoy!", 1.6)
             yield from self.say("guest", "Thank you!", 1.2)
-            self.puppet.arms["right"].set_pose(ARM_WALK["right"], rate=2.0)
-            yield from self.wait(0.6)
+            yield from self.wait(0.3)
 
         # 4. wrap up: step back to the ring and take a bow
         self.guest = -1
