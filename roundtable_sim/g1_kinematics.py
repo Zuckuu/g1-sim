@@ -40,8 +40,9 @@ ARM_STAND = {"left": [0.2, 0.2, 0.0, 1.28, 0.0, 0.0, 0.0], "right": [0.2, -0.2, 
 ARM_WALK = {"left": [0.25, 0.18, 0.0, 0.65, 0.0, 0.0, 0.0], "right": [0.25, -0.18, 0.0, 0.65, 0.0, 0.0, 0.0]}
 # "which one would you like?" presenting gesture (right arm), palm up-ish
 ARM_ASK = {"right": [-0.55, -0.35, 0.35, 1.25, 0.9, 0.2, 0.0]}
-# "here you go" after setting a can down: upper arm vertical, forearm raised, hand at the chest
-ARM_TUCK = {"right": [0.1, -0.22, 0.0, -0.8, 0.0, 0.0, 0.0]}
+# "here you go" after setting a can down: upper arm vertical, forearm raised ~45 deg, open hand
+# beside the chest (an open-palm presenting gesture that also keeps the hand above the table)
+ARM_TUCK = {"right": [0.1, -0.35, 0.0, -0.6, 0.0, 0.0, 0.0]}
 # hand joint order: thumb_0, thumb_1, thumb_2, index_0, index_1, middle_0, middle_1
 HAND_OPEN = {"left": [0.0] * 7, "right": [0.0] * 7}
 HAND_CLOSED_CAN = {"right": [0.0, -0.30, -0.50, 0.25, 1.20, 0.25, 1.20],
