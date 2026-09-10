@@ -3,8 +3,9 @@
     python check_run.py out/run
 
 Fails (exit code 1) if the puppet ever "breaks": joint jumps between consecutive
-30 Hz frames, knees bent the wrong way, over-extended legs, feet under the floor,
-or cans that did not end up upright on their coaster.
+30 Hz frames, arm moves whose IK target was not reached, a contorted waist or an
+upper arm swung behind the back, knees bent the wrong way, over-extended legs,
+feet under the floor, or cans that did not end up upright on their coaster.
 """
 from __future__ import annotations
 
@@ -43,6 +44,24 @@ def check(run_dir: Path, verbose: bool = True) -> bool:
     if len(jumps):
         frames = sorted(set(int(j[0]) for j in jumps))
         fail(f"{len(frames)} frames with joint jumps > 0.35 rad/frame, first at t={run.t[frames[0]]:.2f}s")
+
+    # 1b. arm IK residuals recorded by the scenario (unreachable targets make the IK wander off)
+    warns = [e for e in run.events if e["kind"] == "ik_warn"]
+    if warns:
+        fail(f"{len(warns)} arm moves ended with a large IK residual, first at t={warns[0]['t']:.2f}s "
+             f"({warns[0]['phase']}, err {warns[0]['err']})")
+
+    # 1c. upper body never contorted: waist stays near upright, upper arm never swings far back
+    def qcol(name: str) -> np.ndarray:
+        return run.qpos[:, m.jnt_qposadr[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, name)]]
+    wy, wp = qcol("waist_yaw_joint"), qcol("waist_pitch_joint")
+    if np.abs(wy).max() > 0.6 or wp.min() < -0.3 or wp.max() > 0.5:
+        i = int(np.argmax(np.abs(wy) + np.abs(wp)))
+        fail(f"waist contorted (yaw {wy[i]:+.2f}, pitch {wp[i]:+.2f} rad at t={run.t[i]:.2f}s)")
+    for s in ("left", "right"):
+        sp = qcol(f"{s}_shoulder_pitch_joint")
+        if sp.max() > 1.2:
+            fail(f"{s} upper arm swung behind the back ({sp.max():.2f} rad at t={run.t[int(sp.argmax())]:.2f}s)")
 
     # 2. knees, leg reach, foot height
     knee = {s: m.jnt_qposadr[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, f"{s}_knee_joint")] for s in ("left", "right")}

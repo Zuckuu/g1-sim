@@ -36,9 +36,10 @@ python run.py --view                                            # live MuJoCo vi
 ```
 
 `check_run.py` replays a recording and fails if the puppet ever "breaks": joint jumps
-between frames, knees bent the wrong way, over-extended legs, feet under the floor, or a
-can that did not end up upright on its coaster. Run it after changing the layout or the
-controller before spending an hour on rendering.
+between frames, arm moves whose IK target was not reached (logged as `ik_warn` events),
+a contorted waist or an arm swung behind the back, knees bent the wrong way, over-extended
+legs, feet under the floor, or a can that did not end up upright on its coaster. Run it
+after changing the layout or the controller before spending an hour on rendering.
 
 On a machine without a display set `MUJOCO_GL=egl` (default here) or `MUJOCO_GL=osmesa`.
 `ffmpeg` must be on the PATH for video encoding (`imageio-ffmpeg` ships one).
@@ -95,9 +96,11 @@ and runs 10x faster than real time on 4 CPU cores. Concretely:
   nominal position *will* be shortly after touchdown, so the feet never slide. Each foot pose
   is solved with 6-DoF leg IK (targets clamped to the leg's reach, knee never straight, and a
   restart from the rest pose if a solution goes bad). Turning in place steps as well.
-* **Reaching** — 7-DoF arm IK plus waist pitch/yaw (down-weighted so the torso only leans
-  when the arm alone can't reach). Cartesian moves interpolate the hand pose from where it is
-  to the goal (S-curve), so the hand travels in straight lines.
+* **Reaching** — 7-DoF arm IK plus waist pitch/yaw (down-weighted and range-limited so the
+  torso only leans a little when the arm alone can't reach). Cartesian moves interpolate the
+  hand pose from where it is to the goal (S-curve), so the hand travels in straight lines. The
+  elbow is kept short of the straight-arm singularity (in the G1 model `q=0` is a 90° bend and
+  the arm is straight at about `+1.5 rad`), which rules out the hyper-extended IK branch.
 * **Grasp** — the Dex3 fingers close to a pose tuned around a 66 mm can (index/middle wrap the
   front, thumb closes the side). Because the finger geometry is only visual here, the can is
   attached to the hand frame once the fingers are closed and released again on the coaster

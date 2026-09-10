@@ -339,7 +339,7 @@ class ArmController:
         self.side = side
         self.joints = list(ARM_JOINTS[side])
         self.ik_joints = self.joints + (["waist_pitch_joint", "waist_yaw_joint"] if use_waist else [])
-        self.weights = np.array([1.0] * len(self.joints) + ([0.35, 0.35] if use_waist else []))
+        self.weights = np.array([1.0] * len(self.joints) + ([0.2, 0.2] if use_waist else []))
         self.mode = "pose"
         self.pose_target = np.array(ARM_STAND[side], float)
         self.pose_rate = 2.0  # rad/s
@@ -347,9 +347,15 @@ class ArmController:
         self.rest = np.array(ARM_STAND[side] + ([0.0, 0.0] if use_waist else []), float)
         self.last_ik_err = 0.0
         self.ik_rate = 5.0  # rad/s cap on IK-driven joint motion (no pops if a solution flips)
-        # IK joint limits: model limits, but never a fully straight elbow (singular, flips branches)
+        # IK joint limits.  In the G1 model the elbow is ~90 deg bent at q=0, *positive* q extends
+        # it and the arm is straight (singular; the hyper-extended branch lies beyond) at ~1.5 rad.
+        # Cap extension at 1.1 rad (still 98% of the reach) and allow the model's full flexion so
+        # targets close to the chest stay reachable.  The waist only leans/turns a little.
         self.ik_ranges = robot.ranges(self.ik_joints).copy()
-        self.ik_ranges[3, 0] = max(self.ik_ranges[3, 0], 0.35)
+        self.ik_ranges[3] = [max(self.ik_ranges[3, 0], -0.95), min(self.ik_ranges[3, 1], 1.1)]
+        if use_waist:
+            self.ik_ranges[7] = [-0.12, 0.45]  # waist pitch: slight lean back .. lean forward
+            self.ik_ranges[8] = [-0.5, 0.5]    # waist yaw
 
     # joint-space
     def set_pose(self, pose: Sequence[float], rate: float = 2.0) -> None:

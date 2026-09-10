@@ -290,6 +290,10 @@ class RoundTableScenario:
         arm.move_to(self.puppet.q, np.asarray(target_pos, float), target_rot, duration, self.t)
         while not arm.cart_done(self.t):
             yield
+        # an unreachable target shows up as a large residual; record it so check_run.py can fail
+        if arm.last_ik_err > 0.02:
+            self.log("ik_warn", phase=self.phase, err=round(float(arm.last_ik_err), 4),
+                     target=[round(float(v), 3) for v in target_pos])
 
     def arm_hold(self) -> None:
         arm = self.puppet.arms["right"]
@@ -397,7 +401,8 @@ class RoundTableScenario:
             self.attach_can(k)
             yield from self.wait(0.3)
             yield from self.arm_move(cpos + np.array([0, 0, 0.12]), Rg, 0.7)
-            carry = np.array([bx, by, 0.0]) + Rg @ np.array([0.30, -0.14, 1.02])
+            # carry pose: can held in front of the chest (elbow flexed), clear of the table top
+            carry = np.array([bx, by, 0.0]) + Rg @ np.array([0.27, -0.15, 0.93])
             yield from self.arm_move(carry, Rg, 1.0)
             self.arm_hold()
             yield from self.wait(0.2)
