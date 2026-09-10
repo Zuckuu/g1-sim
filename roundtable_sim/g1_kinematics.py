@@ -10,7 +10,7 @@ trajectory could later be produced by an RL policy instead:
 * :func:`solve_ik`      - damped-least-squares IK with joint weights and a rest-pose nullspace
 * :class:`FootstepGait` - plants/swings feet so they follow a moving base without sliding
 * :class:`ArmController`- joint-space poses or Cartesian (IK) targets, smoothly blended
-* :class:`HandController`- open/closed finger poses for the Dex3 hands
+* :class:`HandController`- open/closed finger poses for the BrainCo Revo2 hands
 """
 from __future__ import annotations
 
@@ -28,9 +28,11 @@ ARM_JOINTS = {s: [f"{s}_shoulder_pitch_joint", f"{s}_shoulder_roll_joint", f"{s}
                   f"{s}_elbow_joint", f"{s}_wrist_roll_joint", f"{s}_wrist_pitch_joint", f"{s}_wrist_yaw_joint"]
               for s in SIDES}
 WAIST_JOINTS = ["waist_yaw_joint", "waist_roll_joint", "waist_pitch_joint"]
-HAND_JOINTS = {s: [f"{s}_hand_thumb_0_joint", f"{s}_hand_thumb_1_joint", f"{s}_hand_thumb_2_joint",
-                   f"{s}_hand_index_0_joint", f"{s}_hand_index_1_joint",
-                   f"{s}_hand_middle_0_joint", f"{s}_hand_middle_1_joint"] for s in SIDES}
+# BrainCo Revo2: 3 thumb joints + proximal/distal on index, middle, ring, pinky (11 per hand;
+# the real hand drives them with 6 motors, the distal joints being coupled to the proximal ones)
+HAND_FINGERS = ("index", "middle", "ring", "pinky")
+HAND_JOINTS = {s: [f"{s}_thumb_metacarpal_joint", f"{s}_thumb_proximal_joint", f"{s}_thumb_distal_joint"]
+               + [f"{s}_{f}_{seg}_joint" for f in HAND_FINGERS for seg in ("proximal", "distal")] for s in SIDES}
 FOOT_BODY = {s: f"{s}_ankle_roll_link" for s in SIDES}
 HAND_BODY = {s: f"{s}_wrist_yaw_link" for s in SIDES}
 
@@ -43,15 +45,28 @@ ARM_ASK = {"right": [-0.55, -0.35, 0.35, 1.25, 0.9, 0.2, 0.0]}
 # "here you go" after setting a can down: upper arm vertical, forearm raised ~45 deg, open hand
 # beside the chest (an open-palm presenting gesture that also keeps the hand above the table)
 ARM_TUCK = {"right": [0.1, -0.35, 0.0, -0.6, 0.0, 0.0, 0.0]}
-# hand joint order: thumb_0, thumb_1, thumb_2, index_0, index_1, middle_0, middle_1
-HAND_OPEN = {"left": [0.0] * 7, "right": [0.0] * 7}
-HAND_CLOSED_CAN = {"right": [0.0, -0.30, -0.50, 0.25, 1.20, 0.25, 1.20],
-                   "left": [0.0, 0.30, 0.50, -0.25, -1.20, -0.25, -1.20]}
-# where a grasped can's centre sits in the wrist_yaw_link (hand) frame
-GRASP_OFFSET = {"right": np.array([0.132, 0.062, 0.0]), "left": np.array([0.132, -0.062, 0.0])}
+# hand joint order: thumb metacarpal (opposition), thumb proximal, thumb distal, then
+# proximal/distal for index, middle, ring, pinky.  All joints close towards the palm for
+# positive values on both hands (the left model is mirrored), so the poses are side-agnostic.
+HAND_OPEN = {s: [0.0] * 11 for s in SIDES}
+# Power grasp around a 66 mm can lying against the palm (tuned numerically on the model):
+# the four fingers curl over the can's far side (pads ~2 mm off the surface, knuckles clear),
+# the fully opposed thumb presses the near-inner side, so pads and thumb face each other.
+# The Revo2's fingers are about as long as the can is wide, so this is the same partial wrap
+# the real hand does on a 330 ml can, not a fully enclosed fist.
+_CLOSED_CAN = [1.48, 0.00, 0.20,  # thumb: metacarpal (opposition), proximal, distal
+               0.55, 0.35,        # index proximal, distal
+               0.70, 0.30,        # middle
+               0.65, 0.35,        # ring
+               0.50, 0.30]        # pinky
+HAND_CLOSED_CAN = {s: list(_CLOSED_CAN) for s in SIDES}
+# where a grasped can's centre sits in the wrist_yaw_link (hand) frame: over the distal half of
+# the palm, one can radius plus 1 mm off the palm surface (+y right / -y left), centred on the
+# fingers along the can's axis
+GRASP_OFFSET = {"right": np.array([0.120, 0.054, 0.0]), "left": np.array([0.120, -0.054, 0.0])}
 FOOT_SITE_HEIGHT = 0.033  # ankle_roll_link origin above the sole
-NQ_ROBOT = 50
-NV_ROBOT = 49
+NQ_ROBOT = 7 + 29 + 2 * 11  # floating base, 29 body joints, two 11-joint hands
+NV_ROBOT = NQ_ROBOT - 1
 
 
 # --------------------------------------------------------------------------------------
@@ -127,6 +142,21 @@ class G1Model:
         self.pelvis = self.body["pelvis"]
         self._jacp = np.zeros((3, model.nv))
         self._jacr = np.zeros((3, model.nv))
+        # the robot owns the first NQ_ROBOT entries of qpos, the cans come after it
+        nq_robot = 0
+        for j in range(model.njnt):
+            if self._is_robot_body(int(model.jnt_bodyid[j])):
+                width = 7 if model.jnt_type[j] == mujoco.mjtJoint.mjJNT_FREE else 1
+                nq_robot = max(nq_robot, int(model.jnt_qposadr[j]) + width)
+        if nq_robot != NQ_ROBOT:
+            raise RuntimeError(f"robot qpos layout mismatch: model has {nq_robot} robot qpos entries, expected {NQ_ROBOT}")
+
+    def _is_robot_body(self, b: int) -> bool:
+        while b != 0:
+            if b == self.pelvis:
+                return True
+            b = int(self.m.body_parentid[b])
+        return False
 
     # -- accessors --------------------------------------------------------------------
     def qadr(self, names: Sequence[str]) -> np.ndarray:

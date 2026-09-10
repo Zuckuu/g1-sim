@@ -5,9 +5,9 @@ Isaac Sim pick-and-place for a **Unitree G1** with **BrainCo Revo2** (or Dex3) h
 Based on [unitree_sim_isaaclab](https://github.com/unitreerobotics/unitree_sim_isaaclab). This repo adds the BrainCo Revo2 task, a click-to-pick demo, and a Windows launch script.
 
 > **CPU-only alternative:** [`roundtable_sim/`](roundtable_sim/README.md) contains a MuJoCo version of
-> the round-table drink-service scenario (G1 asks 10 seated guests "Pepsi or Diet Pepsi?", fetches
-> the can and places it on their coaster). It runs headless without a GPU and renders videos and
-> screenshots, so it can run in the cloud instead of on your PC.
+> the round-table drink-service scenario (G1 with BrainCo Revo2 hands asks 10 seated guests "Pepsi
+> or Diet Pepsi?", fetches the can and places it on their coaster). It runs headless without a GPU
+> and renders videos and screenshots, so it can run in the cloud instead of on your PC.
 
 ## Requirements
 
