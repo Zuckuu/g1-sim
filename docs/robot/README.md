@@ -120,6 +120,38 @@ already runs 300/3 on the big joints, so 120/3 is well inside what this hardware
 BrainCo's serial order is [thumb, thumb_aux, index, middle, ring, pinky] — note **thumb (flex) first, thumb_aux
 (rotation) second** in the DDS array, the opposite of the URDF chain order.
 
+## Real can grasps, both hands (2026-09-10, 22:10–22:25)
+
+Hand-only, robot zero-torque on the stand, operator holding a 12 oz can against the palm (palm vertical, fingers
+horizontal across the lower body, thumb starting "up"). Tool: `robot/revo2_hand_test.py` (recordings in
+`hand-tests/`, ~95 Hz state). Protocol that held the can on both hands:
+
+1. **OPPOSE** `thumb_aux` 0 → 1.0 in 0.2 steps; each step tracks exactly, ~0.2 s per step at speed 0.6.
+2. **CLOSE** thumb + 4 fingers advance 0.10 per step (0.8 s dwell); a finger whose actual lags its command by
+   ≥ 0.07 has hit the can and is frozen; stop when all five have stalled.
+3. **HOLD** the final command (stall + 0.10). **RELEASE** fingers first, then `thumb_aux` back.
+
+| | thumb | thumb_aux | index | middle | ring | pinky |
+|---|---|---|---|---|---|---|
+| right, stall position | 0.20 | 1.00 | 0.18 | 0.28 | 0.25 | 0.20 |
+| left, stall position | 0.18 | 1.00 | 0.19 | 0.29 | 0.28 | 0.19 |
+| hold command (both) | 0.30 | 1.00 | 0.30 | 0.40 | 0.40 | 0.30 |
+| left hold current, mean | 0 mA | 200 mA (at its stop) | 0 mA | 0 mA | −1 mA | 1 mA |
+| left hold drift over 10 s | 0.000 | −0.028 | 0.000 | 0.000 | 0.000 | 0.000 |
+
+What this tells us:
+* Contact comes early: the fingers are only 18–29 % closed (≈ 16–25° at the proximal joints) when they meet a 66 mm
+  can staged against the palm. The grasp is palm + nearly straight fingers + opposed thumb, not a deep wrap.
+* The closers hold with **zero current**: the Revo 2 finger drives are non-backdrivable, so the squeeze applied at
+  stall is kept for free. Grip force is set by how far past the stall we command (0.10 here) and the firmware's
+  stall/current protection; we cannot read it from the state.
+* Motor transients: every step start/brake shows 0.4–1.0 A (braking to −2 A) for 20–80 ms; steady hold currents are
+  < 50 mA on fingers, 200 mA on `thumb_aux` at either end stop. Any over-current guard must be time-filtered
+  (`--max-current 1.2 --over-current-seconds 0.25`); a single-sample 0.8 A guard falsely aborted the first left run.
+* A 0.10 step takes ~120 ms at speed 0.6, so open → stalled on the can is ~0.4 s of motion; the 0.8 s dwells were
+  for observation. The 0.2 s bridge/serial latency is not a factor at demo speeds.
+* Identical numbers left/right: one recipe serves both hands (Pepsi in one, Diet Pepsi in the other).
+
 ## Safe next steps on the real robot (in order)
 
 1. **Measure the adapter** (calipers): wrist flange face → Revo 2 base flange; also confirm fingers-along-forearm,
