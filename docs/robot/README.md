@@ -189,6 +189,42 @@ Findings:
 `--mode ramp --ramp-rate 0.8 --speed 1.0 --stall-threshold 0.07 --squeeze 0.10` (optionally `--squeeze-seconds 0.2`,
 `--thumb-lag 0.3` for the cradle); verify contact map; release with a 0.8 s finger ramp, thumb_aux last.
 
+### The same flow in the simulator (22:40–23:05) — first held can
+
+`sim/g1_walk_grasp.py --finger-mode stall` reproduces the bench flow on the whole robot: normalized finger targets
+ramp at 0.8/s, each finger freezes at contact + 0.10 when it stops tracking, stiff hold (`docs/robot/
+sim-grasp-fixedbase-can-stall-held.json`, video `hand-tests/sim-can-stall-held.mp4`). Getting the arm to the can
+took four fixes, each one visible in the video of the previous failure:
+
+| attempt | what happened | fix |
+|---|---|---|
+| can-stall-1 | approach knocked the free-standing can over (1 mm clearance, IK settling) | more clearance, or an insert |
+| can-stall-2 | with a 40 mm insert the fingers gripped the can's **top** (contacts 0.42–0.53); squeeze pivoted it over the lip | palm centre 55 mm, not 60 (bench: hand rested on its pinky edge ≈ 45 mm) |
+| can-stall-3/4 | at 45 mm the fingers swept along the table and wedged under the can's base chime | approach 3 cm high, then **descend** onto the grasp height |
+| can-stall-5/6 | the **pre-opposed thumb** sticks ~8 cm out in front of the palm and toppled the can while the palm was still 6–9 cm away; with 11 mm clearance the upper fingers dragged the top of the can in first and it slipped | approach with the thumb **up**, rotate it across only when the palm is at the can; 3 mm clearance |
+| **can-stall-7** | **held, 14.2 cm of 14** — contacts thumb 0.09, index 0.25, pinky 0.29, middle 0.40, ring 0.40 (deeper than the bench: the sim palm is ~5 mm further off the can) | now the script defaults |
+
+Placement rule that came out of it: palm face 3 mm off the can, palm centre 55 mm above the base, can axis 15 mm
+toward the fingertips from the knuckle line, arrive 3 cm high and descend, thumb up until arrival. The bench
+protocol (oppose first, then place the can) works for a hand-held can but not for an arm arriving from the side.
+
+**How accurately must the arm place the palm?** (sim, fixed base, one axis varied from the recipe at a time)
+
+| axis | tried | result |
+|---|---|---|
+| palm clearance (approach depth) | 3 mm · 8 mm · 13 mm | held · held · **dropped** (pinky never reached the can; top dragged in first) |
+| along the fingers (distal offset) | +15 mm · +35 mm · −5 mm | held · held (12.7 cm) · **dropped** (can at the palm heel, thumb never touched) |
+| height (palm centre above base) | 40 · 55 · 70 mm | held · held · held |
+| hand | right · left | held · held (left rose 25 cm for a 14 cm command — check the left-arm lift target) |
+
+| palm press (target inside the can surface) | 5 mm · 10 mm | held · held — and the contact map moves onto the bench values (thumb 0.19–0.21, pinky 0.20–0.23, index 0.28) |
+
+So: ±15 mm in height and roughly −0/+20 mm along the fingers are free; the approach depth is the tight one. With a
+5 mm compliant press as the nominal (now the default: the arm's kp 120 PD turns it into a gentle touch) the working
+window is about −5 mm (deeper) to +13 mm (short), i.e. the arm must hit the depth to roughly ±9 mm. The contact map
+covers the rest: if the pinky/ring run past ~0.45 without stopping, the palm was short — open, step 10 mm deeper,
+close again.
+
 ## Safe next steps on the real robot (in order)
 
 1. **Measure the adapter** (calipers): wrist flange face → Revo 2 base flange; also confirm fingers-along-forearm,

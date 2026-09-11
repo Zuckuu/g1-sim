@@ -41,9 +41,9 @@ PRESETS = {
     # Diet Pepsi is ~0.37 kg. waist/waist_center are unused for cans (kind="can").
     "pepsi-12oz-can": dict(height=0.1224, diameter=0.0662, mass=0.38, waist=1.0, waist_center=0.5, kind="can"),
 }
-# where the palm centre should sit above the base when nothing else is specified: label zone on a bottle,
-# middle of the body on a can (also roughly its centre of mass)
-DEFAULT_GRASP_HEIGHT = {"bottle": 0.10, "can": 0.06}
+# where the palm centre should sit above the base when nothing else is specified: label zone on a bottle; on a can
+# 55 mm = what held on the real Revo 2 (palm centre just below mid-body: fingers on the lower body, thumb over the top)
+DEFAULT_GRASP_HEIGHT = {"bottle": 0.10, "can": 0.055}
 
 
 def kind_of(preset_name: str) -> str:

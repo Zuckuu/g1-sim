@@ -46,14 +46,35 @@ parser.add_argument("--table-height", type=float, default=None, help="table top 
 parser.add_argument("--walk-speed", type=float, default=0.5, help="m/s; Unitree's sim policy stands still below ~0.5 m/s")
 parser.add_argument("--reach-x", type=float, default=0.35, help="desired bottle distance ahead of the pelvis after stopping")
 parser.add_argument("--stop-lead", type=float, default=0.20, help="command zero velocity this far before reach-x (stopping distance)")
-parser.add_argument("--gap", type=float, default=0.034)
-parser.add_argument("--distal-offset", type=float, default=0.040)
+parser.add_argument("--gap", type=float, default=0.026, help="knuckle line to object surface along the palm normal (m); palm face is 0.023 out -> 3 mm clearance")
+parser.add_argument("--distal-offset", type=float, default=0.015, help="object axis this far from the knuckle line toward the fingertips (m)")
 parser.add_argument("--grasp-height", type=float, default=None,
                     help="palm centre above the object base (m); default per object: 0.10 on bottles, 0.06 on the can (mid-body, ~its CoM)")
 parser.add_argument("--lift", type=float, default=0.10)
 parser.add_argument("--holder", type=float, default=0.0, help="height (m) of a rigid insert around the object base (basket insert, sized from the mesh + 3 mm); 0 = none")
-parser.add_argument("--finger-effort", type=float, default=1.5, help="finger drive torque limit Nm (the real hand is current-limited; 0.3-0.5 ~ gentle stall)")
-parser.add_argument("--press", type=float, default=0.0, help="m: approach target pushes the palm this far *into* the bottle surface before closing; released on lift")
+parser.add_argument("--finger-effort", type=float, default=0.5, help="finger drive torque limit Nm (the real hand is current-limited; 0.3-0.5 ~ gentle stall)")
+parser.add_argument("--finger-mode", choices=["stall", "wrap"], default="stall",
+                    help="stall: the flow measured on the real Revo 2 (docs/robot/README.md) - normalized targets ramp at --ramp-rate, a "
+                         "finger that stops tracking is frozen at contact + --squeeze and held stiffly; wrap: legacy 0.7 s cosine ramp to a 90%% fist")
+parser.add_argument("--ramp-rate", type=float, default=0.8, help="stall mode: normalized close speed (real runs: 0.4-1.2 /s)")
+parser.add_argument("--squeeze", type=float, default=0.10, help="stall mode: hold target beyond the contact position (normalized)")
+parser.add_argument("--stall-threshold", type=float, default=0.07, help="stall mode: target - actual (normalized) that counts as contact")
+parser.add_argument("--thumb-lag", type=float, default=0.0, help="stall mode: thumb flex starts this many s after the fingers (0.3 = cradle variant)")
+parser.add_argument("--max-close", type=float, default=0.8, help="stall mode: never command beyond this (normalized)")
+parser.add_argument("--aux", type=float, default=0.9, help="thumb opposition (normalized) during pre-shape and grasp; the real runs used 1.0")
+parser.add_argument("--oppose-at-close", dest="oppose_at_close", action="store_true", default=True,
+                    help="(default) approach with the thumb up in the palm plane and rotate it across only once the palm is at the can; "
+                         "an opposed thumb sticks ~8 cm out in front of the palm and knocks a free-standing can over on the way in")
+parser.add_argument("--oppose-before-approach", dest="oppose_at_close", action="store_false", help="pre-shape the thumb before the approach (bench protocol)")
+parser.add_argument("--oppose-seconds", type=float, default=0.6, help="thumb opposition ramp at the start of the close (real bench: 1.2 s)")
+parser.add_argument("--hand-kp", type=float, default=6.0, help="finger drive stiffness Nm/rad")
+parser.add_argument("--hand-kd", type=float, default=0.3)
+parser.add_argument("--press", type=float, default=0.005,
+                    help="m: approach target pushes the palm this far *into* the object surface before closing (the arm's PD makes it a compliant "
+                         "touch that absorbs depth error; 5 and 10 mm both held the can); eased off on lift")
+parser.add_argument("--approach-rise", type=float, default=0.03,
+                    help="m: approach the object this much above the grasp height, then settle down onto it before closing "
+                         "(keeps the sweeping fingers off the table / can base)")
 parser.add_argument("--arm-time-scale", type=float, default=1.0, help="multiply arm motion durations (slower = less disturbance to the balance policy)")
 parser.add_argument("--collider", choices=["convex_hull", "convex_decomposition"], default="convex_decomposition")
 parser.add_argument("--reconvert", action="store_true")
@@ -288,7 +309,7 @@ def robot_cfg(usd_path):
             ),
             "hands": ImplicitActuatorCfg(
                 joint_names_expr=hand_expr, effort_limit_sim=args.finger_effort, velocity_limit_sim=2.3,  # Revo 2: full close <= 0.65 s
-                stiffness=6.0, damping=0.3, armature=0.001,
+                stiffness=args.hand_kp, damping=args.hand_kd, armature=0.001,
             ),
         },
     )
@@ -524,11 +545,59 @@ def main():
         return q
 
     q_hand_open = hand_targets(0.0, 0.0, 0.0)
-    q_hand_pre = hand_targets(0.0, 0.0, 0.9)
-    q_hand_close = hand_targets(0.9, 0.75, 0.9)
+    q_hand_pre = hand_targets(0.0, 0.0, args.aux)
+    q_hand_close = hand_targets(0.9, 0.75, args.aux)
     hand_ids = [idx[n] for n in HAND_ACTIVE.values()] + [idx[n] for n in DISTAL if n in idx]
 
     hand_prev = {"q": q_hand_open, "q0": q_hand_open, "t0": 0.0, "T": 0.7}
+    hand_direct = {"q": None}  # stall mode: full target vector written as-is (no ramp) while not None
+
+    # --- stall-mode close: the flow measured on the real hand (robot/revo2_hand_test.py --mode ramp) ---
+    CLOSERS = ["thumb", "index", "middle", "ring", "pinky"]
+    stall = {"t0": None, "target": {k: 0.0 for k in CLOSERS}, "frozen": {k: False for k in CLOSERS},
+             "contact": {}, "recent": {k: [] for k in CLOSERS}, "done_t": None}
+
+    def stall_close_tick():
+        """one 50 Hz tick of the ramp-and-freeze close; returns True once every closer is frozen."""
+        qa = robot.data.joint_pos[0]
+        el = t - stall["t0"]
+        q = q_hand_pre.clone()
+        if args.oppose_at_close:
+            # thumb across first (ramp), fingers start when it is there
+            a = min(1.0, el / max(args.oppose_seconds, 1e-3))
+            q[idx[HAND_ACTIVE["thumb_aux"]]] = (0.5 - 0.5 * math.cos(math.pi * a)) * args.aux * UPPER["thumb_aux"]
+            if a < 1.0:
+                for k in CLOSERS:
+                    q[idx[HAND_ACTIVE[k]]] = 0.0
+                hand_direct["q"] = q
+                return False
+            el -= args.oppose_seconds
+        for k in CLOSERS:
+            name = HAND_ACTIVE[k]
+            act = float(qa[idx[name]]) / UPPER[k]
+            if not stall["frozen"][k]:
+                lag = args.thumb_lag if k == "thumb" else 0.0
+                tgt = min(args.max_close, args.ramp_rate * max(0.0, el - lag))
+                stall["target"][k] = tgt
+                rec_ = stall["recent"][k]
+                rec_.append(act)
+                del rec_[:-4]
+                err = tgt - act
+                stopped = len(rec_) == 4 and max(rec_) - min(rec_) < 0.005
+                # both rules wait until the target has moved 0.10: the sim finger's first tick can lag from rest
+                if tgt >= 0.10 and (err >= args.stall_threshold or (stopped and err >= 0.04)):
+                    stall["frozen"][k] = True
+                    stall["target"][k] = min(args.max_close, act + args.squeeze)
+                    stall["contact"][k] = {"t": round(el, 3), "act": round(act, 3), "hold_cmd": round(stall["target"][k], 3),
+                                           "why": "lag" if err >= args.stall_threshold else "stopped"}
+                    print(f"SIM_CONTACT {k:6s} at {el:.2f}s: act {act:.2f} -> hold cmd {stall['target'][k]:.2f} ({stall['contact'][k]['why']})", flush=True)
+                elif tgt >= args.max_close - 1e-9:
+                    stall["frozen"][k] = True
+                    stall["contact"][k] = {"t": round(el, 3), "act": round(act, 3), "hold_cmd": round(tgt, 3), "why": "max-close, no contact"}
+                    print(f"SIM_MAX     {k:6s} at {el:.2f}s: act {act:.2f}, no contact", flush=True)
+            q[idx[name]] = stall["target"][k] * UPPER[k]
+        hand_direct["q"] = q
+        return all(stall["frozen"].values())
 
     def set_hand(q_cmd_hand, T=0.7):
         hand_prev["q0"] = hand_prev["q"].clone() if hand_prev["q"] is not None else q_hand_open
@@ -542,9 +611,12 @@ def main():
         hand_prev["T"] = T
 
     def apply_hand(_unused=None):
-        a = min(1.0, (t - hand_prev["t0"]) / max(hand_prev["T"], 1e-3))
-        a = 0.5 - 0.5 * math.cos(math.pi * a)
-        q_cmd_hand = hand_prev["q0"] + a * (hand_prev["q"] - hand_prev["q0"])
+        if hand_direct["q"] is not None:
+            q_cmd_hand = hand_direct["q"]
+        else:
+            a = min(1.0, (t - hand_prev["t0"]) / max(hand_prev["T"], 1e-3))
+            a = 0.5 - 0.5 * math.cos(math.pi * a)
+            q_cmd_hand = hand_prev["q0"] + a * (hand_prev["q"] - hand_prev["q0"])
         qa = robot.data.joint_pos[0]
         for name in HAND_ACTIVE.values():
             targets[0, idx[name]] = q_cmd_hand[idx[name]]
@@ -800,7 +872,8 @@ def main():
                     if args.phase == "walk":
                         break
                     place_camera("close")
-                    set_hand(q_hand_pre, 0.5)  # thumb into opposition before the approach
+                    if not (args.finger_mode == "stall" and args.oppose_at_close):
+                        set_hand(q_hand_pre, 0.5)  # thumb into opposition before the approach (bench protocol)
                     palm_start = hand_pose_b()[0][0] + torch.tensor([0.0, 0.0, 0.0], device=sim.device)
                     # current palm centre (pelvis frame)
                     p_hb, q_hb = hand_pose_b()
@@ -842,7 +915,7 @@ def main():
             elif phase == "pregrasp":
                 if t - phase_t0 > move_T + 0.8:
                     palm_start = palm_goal
-                    palm_goal = grasp_palm_target_b(gap=args.gap - args.press)  # palm-contact approach
+                    palm_goal = grasp_palm_target_b(gap=args.gap - args.press) + torch.tensor([0.0, 0.0, args.approach_rise], device=sim.device)
                     move_T = 1.5 * args.arm_time_scale
                     if args.arm_kp_scale != 1.0:
                         kp = robot.data.joint_stiffness[0:1, arm_ids_t] * args.arm_kp_scale
@@ -851,14 +924,35 @@ def main():
                         robot.write_joint_damping_to_sim(kd, joint_ids=arm_ids)
                         print(f"G1_ARM_GAINS scaled x{args.arm_kp_scale}: kp={np.round(kp[0].cpu().numpy(),1).tolist()}", flush=True)
                     log_phase("approach")
-            elif phase == "approach":
+            elif phase == "approach" and args.approach_rise > 0.0:
+                if t - phase_t0 > move_T + 0.4:
+                    palm_start = palm_goal
+                    palm_goal = grasp_palm_target_b(gap=args.gap - args.press)  # settle down onto the grasp height
+                    move_T = 0.8 * args.arm_time_scale
+                    log_phase("descend")
+            elif phase in ("approach", "descend"):
                 if t - phase_t0 > move_T + 0.6:
-                    set_hand(q_hand_close, 0.7)
+                    if args.finger_mode == "stall":
+                        stall["t0"] = t
+                        print(f"SIM_CLOSE ramp {args.ramp_rate:.2f}/s, squeeze +{args.squeeze:.2f}, thumb lag {args.thumb_lag:.2f}s, "
+                              f"thr {args.stall_threshold:.2f}, effort cap {args.finger_effort:.2f} Nm", flush=True)
+                    else:
+                        set_hand(q_hand_close, 0.7)
                     grasp_t0 = t
                     palm_start = palm_goal  # hold the grasp pose while the fingers close
                     log_phase("close")
             elif phase == "close":
-                if t - phase_t0 > 1.4:
+                if args.finger_mode == "stall":
+                    all_frozen = stall_close_tick()
+                    if all_frozen and stall["done_t"] is None:
+                        stall["done_t"] = t
+                        cm = " ".join(f"{k}@{v['act']:.2f}" for k, v in stall["contact"].items())
+                        print(f"SIM_CLOSE done in {t - stall['t0']:.2f}s: contact {cm}", flush=True)
+                        result["contact_map"] = stall["contact"]
+                    close_over = (stall["done_t"] is not None and t - stall["done_t"] > 0.5) or (t - phase_t0 > 2.5 + (args.oppose_seconds if args.oppose_at_close else 0.0))
+                else:
+                    close_over = t - phase_t0 > 1.4
+                if close_over:
                     lift_ref_z = float(bottle.data.root_pos_w[0, 2])
                     palm_start = palm_goal
                     sgn = 1.0 if side == "right" else -1.0
@@ -917,7 +1011,7 @@ def main():
                     b_ = np.round(bottle_rel_b().cpu().numpy(), 3); pc_ = np.round((p_hb[0] + Rh_ @ palm_h).cpu().numpy(), 3)
                     print(f"  t={t:5.2f}s {phase:9s} palm err {err*1000:5.1f} mm rot err {math.degrees(rot_err):5.1f} deg | palm_normal(pelvis)={ex_.tolist()} fingers={ez_.tolist()} palm_c={pc_.tolist()} bottle_base={b_.tolist()} limits={sat}", flush=True)
 
-            if phase in ("approach", "close") and step % (decim * 10) == 0:
+            if phase in ("approach", "descend", "close") and step % (decim * 10) == 0:
                 names_ = [f"{side}_index_proximal_link", f"{side}_pinky_proximal_link", f"{side}_index_distal_link", f"{side}_thumb_distal_link"]
                 ids_ = [robot.body_names.index(n_) for n_ in names_ if n_ in robot.body_names]
                 pos_ = robot.data.body_pos_w[0, ids_].cpu().numpy()

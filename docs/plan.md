@@ -89,6 +89,12 @@ with `robot/g1_snapshot.py` (details and every number in `docs/robot/README.md`)
   doubles as a grasp check. Details and the demo recipe in `docs/robot/README.md`. **Sim consequence:** the grasp to
   model is palm contact + opposed thumb + fingers at 20–30 % flexion with a stiff position hold, not a deep torque-
   limited wrap; the can must be brought against the palm by the arm (or dragged in by the fingers) before closing.
+* **Sim holds the can (23:00).** `g1_walk_grasp.py --finger-mode stall` (now default) ports the bench flow; with the
+  arm placement fixed (thumb up on approach, arrive 3 cm high and descend, palm 3 mm off the can, palm centre 55 mm)
+  the fixed-base G1 lifts the can 14 cm on both hands. Placement tolerance measured: height ±15 mm and +20 mm along
+  the fingers are free; approach depth must be within ~10 mm — that is the number the arm controller has to hit, and
+  the finger contact map tells us when it did not. Next: the same with the balance policy running (floating base),
+  the can in a basket at chest height instead of a table, and the release/hand-over.
 
 ## Simulation tracks (this laptop)
 
