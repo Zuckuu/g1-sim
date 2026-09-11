@@ -47,14 +47,27 @@ parser.add_argument("--stage", choices=["check", "oppose", "close", "release", "
 parser.add_argument("--iface", default="eth0")
 parser.add_argument("--domain", type=int, default=0)
 parser.add_argument("--speed", type=float, default=0.6, help="normalized finger speed sent as dq (bridge default/recommended 1.0)")
+parser.add_argument("--mode", choices=["step", "ramp"], default="ramp",
+                    help="step: 0.10 increments with dwells (the first protocol); ramp: one continuous command ramp at 50 Hz, "
+                         "each finger frozen at actual+squeeze the moment it stops tracking (contact)")
+parser.add_argument("--ramp-rate", type=float, default=0.4, help="ramp mode: command slope in normalized units/s (finger max ~1.2 at speed 0.6)")
+parser.add_argument("--squeeze", type=float, default=0.10, help="ramp mode: command held this far beyond the contact position")
+parser.add_argument("--squeeze-seconds", type=float, default=0.0, help="ramp mode: apply the squeeze as a ramp over this long (0 = step)")
+parser.add_argument("--thumb-lag", type=float, default=0.0, help="ramp mode: thumb flex starts this many s after the fingers")
 parser.add_argument("--aux-target", type=float, default=1.0, help="thumb_aux opposition target")
-parser.add_argument("--aux-step", type=float, default=0.2)
+parser.add_argument("--aux-step", type=float, default=0.2, help="step mode oppose/release increments")
+parser.add_argument("--aux-seconds", type=float, default=1.2, help="ramp mode: thumb_aux ramp duration (oppose and release)")
+parser.add_argument("--release-seconds", type=float, default=0.8, help="ramp mode: closers open over this long")
+parser.add_argument("--keep-aux", action="store_true", help="release leaves thumb_aux opposed (hand pre-shaped for the next run)")
 parser.add_argument("--close-step", type=float, default=0.1)
 parser.add_argument("--max-close", type=float, default=0.8, help="never command a closer beyond this")
 parser.add_argument("--stall-threshold", type=float, default=0.07, help="cmd - actual above this = finger stopped by the can")
+parser.add_argument("--stopped-threshold", type=float, default=0.04,
+                    help="ramp mode: also call contact when the finger has not moved for ~40 ms while cmd - actual exceeds this")
 parser.add_argument("--step-dwell", type=float, default=0.8, help="s to settle after each step before reading positions")
 parser.add_argument("--hold", type=float, default=10.0, help="s to hold the grasp before releasing")
 parser.add_argument("--keep", action="store_true", help="close stage: leave the hand closed (no release)")
+parser.add_argument("--label", default="", help="free text stored with the recording (what was different about this run)")
 parser.add_argument("--countdown", type=float, default=0.0, help="s of OPEN before OPPOSE so the operator can stage the can")
 parser.add_argument("--max-current", type=float, default=1.2,
                     help="A; abort to OPEN if any finger stays above this for --over-current-seconds (step start/brake "
@@ -184,8 +197,31 @@ def abort(why):
     os._exit(2)
 
 
+def ramp_to(q, goals, seconds, label=None, lag=None):
+    """50 Hz linear ramp of q toward goals (dict index->value) over `seconds`; lag (dict index->s) delays a finger's start."""
+    q = list(q)
+    start = {i: q[i] for i in goals}
+    lag = lag or {}
+    t0 = now()
+    total = seconds + max([0.0] + list(lag.values()))
+    while True:
+        el = now() - t0
+        for i, g in goals.items():
+            a = min(1.0, max(0.0, (el - lag.get(i, 0.0)) / seconds)) if seconds > 0 else 1.0
+            q[i] = start[i] + (g - start[i]) * a
+        publish(q)
+        guard()
+        if el >= total:
+            break
+        time.sleep(0.02)
+    if label:
+        qq, _, _ = latest()
+        log("%s -> %s | act %s" % (label, fmt_q(q), fmt_named(qq)))
+    return q
+
+
 def open_all(fast=False):
-    """fingers open first (so the thumb does not sweep into them), then thumb_aux back to 0."""
+    """fingers open first (so the thumb does not sweep into them), then thumb_aux back to 0 unless --keep-aux."""
     qq, _, _ = latest()
     q = list(qq) if qq else [0.0] * 6
     if fast:
@@ -196,11 +232,24 @@ def open_all(fast=False):
         publish([0.0] * 6, speed=1.0)
         time.sleep(0.5)
         return
+    if args.mode == "ramp":
+        q = ramp_to(q, {i: 0.0 for i in CLOSERS}, args.release_seconds, label="RELEASE fingers")
+        dwell(0.3, q)
+        if args.keep_aux:
+            log("RELEASE keeps thumb_aux at %.2f (--keep-aux)" % q[1])
+            dwell(0.2, q)
+            return
+        q = ramp_to(q, {1: 0.0}, args.aux_seconds, label="RELEASE aux")
+        dwell(0.3, q)
+        return
     for i in CLOSERS:
         q[i] = 0.0
     publish(q)
     log("RELEASE fingers -> 0")
     dwell(1.2, q)
+    if args.keep_aux:
+        log("RELEASE keeps thumb_aux at %.2f (--keep-aux)" % q[1])
+        return
     aux = q[1]
     while aux > 1e-3:
         aux = max(0.0, aux - args.aux_step)
@@ -291,15 +340,22 @@ def stage_oppose(q):
             remaining -= 1.0
             if remaining > 0 and int(remaining) % 5 == 0:
                 print("        ... %d s" % int(remaining), flush=True)
-    aux = q[1]
-    while aux < args.aux_target - 1e-6:
-        aux = min(args.aux_target, aux + args.aux_step)
-        q[1] = aux
-        publish(q)
-        dwell(args.step_dwell, q)
-        qq, cur, _ = latest()
-        log("OPPOSE aux=%.2f act=%.2f cur=%.0f mA" % (aux, qq[1], cur[1] * 1000.0))
-    SUMMARY["oppose"] = dict(aux_cmd=args.aux_target, aux_act=latest()[0][1])
+    t_start = now()
+    if args.mode == "ramp":
+        q = ramp_to(q, {1: args.aux_target}, args.aux_seconds, label="OPPOSE ramp %.1fs" % args.aux_seconds)
+        dwell(0.4, q)
+    else:
+        aux = q[1]
+        while aux < args.aux_target - 1e-6:
+            aux = min(args.aux_target, aux + args.aux_step)
+            q[1] = aux
+            publish(q)
+            dwell(args.step_dwell, q)
+            qq, cur, _ = latest()
+            log("OPPOSE aux=%.2f act=%.2f cur=%.0f mA" % (aux, qq[1], cur[1] * 1000.0))
+    qq, cur, _ = latest()
+    SUMMARY["oppose"] = dict(aux_cmd=args.aux_target, aux_act=qq[1], seconds=round(now() - t_start, 2), cur_A=cur[1])
+    log("OPPOSE done act=%.2f cur=%.0f mA" % (qq[1], cur[1] * 1000.0))
     return q
 
 
@@ -312,6 +368,8 @@ def stage_close(q):
     stalled = [False] * 6
     stalled[1] = True                       # thumb_aux is fixed during CLOSE
     steps = []
+    if args.mode == "ramp":
+        return close_ramp(q, stalled)
     for step in range(40):
         active = [i for i in CLOSERS if not stalled[i] and q[i] < args.max_close - 1e-6]
         if not active:
@@ -331,8 +389,72 @@ def stage_close(q):
                                  ("  stalled: " + ", ".join(newly)) if newly else ""))
         steps.append(dict(t=round(now(), 3), cmd=list(q), act=act, cur_A=cur, stalled=list(stalled)))
     act, cur, _ = latest()
-    SUMMARY["close"] = dict(steps=steps, final_cmd=list(q), final_act=act, final_cur_A=cur, stalled=stalled,
+    SUMMARY["close"] = dict(mode="step", steps=steps, final_cmd=list(q), final_act=act, final_cur_A=cur, stalled=stalled,
                             all_stalled=all(stalled[i] for i in CLOSERS))
+    return hold_phase(q)
+
+
+def close_ramp(q, stalled):
+    """one continuous close: every closer's command ramps at --ramp-rate; the moment a finger stops tracking (contact)
+    its command is frozen at actual + --squeeze. Thumb flex may start --thumb-lag later than the fingers."""
+    t0 = now()
+    start_q = list(q)
+    contact = {}
+    recent = {i: [] for i in CLOSERS}       # last few actual positions per finger, for the 'stopped' test
+    last_print = 0.0
+    log("CLOSE ramp %.2f/s, squeeze +%.2f, thumb lag %.2fs, speed %.2f" % (args.ramp_rate, args.squeeze, args.thumb_lag, args.speed))
+    squeeze_ramp = {}                       # finger -> (t_contact, from, to) when --squeeze-seconds > 0
+    while True:
+        el = now() - t0
+        act, cur, _ = latest()
+        for i, (tc, q_from, q_to) in list(squeeze_ramp.items()):
+            a = min(1.0, (el - tc) / args.squeeze_seconds)
+            q[i] = q_from + (q_to - q_from) * a
+            if a >= 1.0:
+                del squeeze_ramp[i]
+        for i in CLOSERS:
+            if stalled[i]:
+                continue
+            lag = args.thumb_lag if i == 0 else 0.0
+            q[i] = min(args.max_close, start_q[i] + args.ramp_rate * max(0.0, el - lag))
+            recent[i].append(act[i])
+            recent[i] = recent[i][-4:]
+            err = q[i] - act[i]
+            stopped = len(recent[i]) == 4 and max(recent[i]) - min(recent[i]) < 0.005 and q[i] >= start_q[i] + 0.10
+            if err >= args.stall_threshold or (stopped and err >= args.stopped_threshold):
+                stalled[i] = True
+                q_hold = min(args.max_close, act[i] + args.squeeze)
+                if args.squeeze_seconds > 0:
+                    squeeze_ramp[i] = (el, act[i], q_hold)
+                    q[i] = act[i]
+                else:
+                    q[i] = q_hold
+                contact[FINGERS[i]] = dict(t=round(el, 3), act=act[i], cmd=q_hold, cur_A=cur[i],
+                                           why="lag %.3f" % err if err >= args.stall_threshold else "stopped, lag %.3f" % err)
+                log("CONTACT %-6s at %.2fs: act %.2f -> hold cmd %.2f (%s)" % (FINGERS[i], el, act[i], q_hold, contact[FINGERS[i]]["why"]))
+            elif q[i] >= args.max_close - 1e-9:
+                stalled[i] = True
+                contact[FINGERS[i]] = dict(t=round(el, 3), act=act[i], cmd=q[i], cur_A=cur[i], why="max-close, no contact")
+                log("MAX    %-6s at %.2fs: act %.2f, no contact" % (FINGERS[i], el, act[i]))
+        publish(q)
+        guard()
+        if el - last_print >= 0.25:
+            last_print = el
+            print("        %.2fs CMD %s POS %s" % (el, fmt_q(q, stalled), fmt_named(act)), flush=True)
+        if all(stalled[i] for i in CLOSERS) and not squeeze_ramp:
+            break
+        time.sleep(0.02)
+    act, cur, _ = latest()
+    SUMMARY["close"] = dict(mode="ramp", ramp_rate=args.ramp_rate, squeeze=args.squeeze, squeeze_seconds=args.squeeze_seconds, thumb_lag=args.thumb_lag,
+                            contact=contact, seconds=round(now() - t0, 3), final_cmd=list(q), final_act=act, final_cur_A=cur,
+                            stalled=stalled, all_stalled=all(k in contact and "no contact" not in contact[k]["why"] for k in
+                                                              [FINGERS[i] for i in CLOSERS]))
+    log("CLOSE done in %.2fs: contact %s" % (SUMMARY["close"]["seconds"],
+                                             " ".join("%s@%.2f" % (k, v["act"]) for k, v in contact.items())))
+    return hold_phase(q)
+
+
+def hold_phase(q):
     log("HOLD %s for %.0f s%s" % (fmt_q(q), args.hold, "" if SUMMARY["close"]["all_stalled"] else "  (not all fingers stalled)"))
     hold_rows0 = len(STATE_ROWS)
     remaining = args.hold
@@ -382,9 +504,21 @@ elif args.stage == "release":
     precheck(False, False)
     open_all()
 elif args.stage == "all":
-    q0 = precheck(True, False)
-    q1 = stage_oppose(q0)
-    dwell(1.0, q1)
+    q0 = precheck(False, False)
+    if not args.force and max(q0[i] for i in CLOSERS) > 0.15:
+        log("closers are not open (%s): --stage release first, or --force" % fmt_named(q0))
+        save()
+        os._exit(1)
+    if q0[1] >= 0.5:
+        log("thumb already opposed (aux %.2f): skipping OPPOSE" % q0[1])
+        q1 = list(q0)
+        q1[1] = args.aux_target if abs(q0[1] - args.aux_target) < 0.15 else q0[1]
+        if args.countdown > 0:
+            log("stage the can against the palm (%.0f s)" % args.countdown)
+            dwell(args.countdown, q1)
+    else:
+        q1 = stage_oppose(q0)
+    dwell(0.6, q1)
     q2 = stage_close(q1)
     if args.keep:
         log("--keep: hand left closed. Open with --stage release")

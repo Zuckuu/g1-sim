@@ -152,6 +152,43 @@ What this tells us:
   for observation. The 0.2 s bridge/serial latency is not a factor at demo speeds.
 * Identical numbers left/right: one recipe serves both hands (Pepsi in one, Diet Pepsi in the other).
 
+### Smooth closes (22:30–22:45, left hand, 7 more runs)
+
+`--mode ramp`: every closer's command ramps continuously at 50 Hz; the moment a finger stops tracking (cmd − act ≥
+threshold, or no motion for 40 ms) it is frozen at actual + squeeze. No pauses. Plot:
+`hand-tests/revo2-left-smooth-comparison.png`; recordings `revo2-left-smooth{1..5}.json`, `revo2-left-offset{1,2}.json`.
+
+| run | ramp /s | speed | squeeze | thumb lag | close → all stopped | contact thumb / index / middle / ring / pinky | hold current (mA) | drift 6 s |
+|---|---|---|---|---|---|---|---|---|
+| step protocol | 0.10 steps | 0.6 | +0.10 | – | 3.26 s | 0.18 / 0.19 / 0.29 / 0.28 / 0.19 | 0–1 | 0.000 |
+| smooth-1 | 0.4 | 0.6 | +0.10 | 0 | **0.87 s** | 0.20 / 0.21 / 0.29 / 0.28 / 0.21 | 0–26 | 0.002 |
+| smooth-2 | 0.8 | 1.0 | +0.10 | 0 | **0.47 s** | 0.21 / 0.21 / 0.29 / 0.27 / 0.19 | 6–23 | 0.002 |
+| smooth-3 | 0.8 | 1.0 | +0.10 | 0.3 s | 0.54 s | 0.06 / 0.29 / 0.34 / 0.33 / 0.28 | 12–21 | 0.005 |
+| smooth-4 | 0.8 | 1.0 | +0.20 | 0 | 0.45 s | 0.21 / 0.21 / 0.28 / 0.26 / 0.19 | 9–25 | 0.003 |
+| smooth-5 | 1.2 | 1.0 | +0.10 ramped 0.3 s | 0 | 0.64 s (0.32 to contact) | 0.21 / 0.21 / 0.28 / 0.25 / 0.20 | 0–1 | 0.000 |
+| offset-1 (can ~2 cm off palm) | 0.8 | 1.0 | +0.10 | 0 | 0.45 s | 0.21 / 0.21 / 0.28 / 0.26 / 0.21 | 8–22 | 0.004 |
+| offset-2 (can ~3–4 cm off palm) | 0.8 | 1.0 | +0.10 | 0 | 0.45 s | 0.21 / 0.21 / 0.27 / 0.25 / 0.20 | 9–21 | 0.002 |
+
+Findings:
+* **The contact map is a fingerprint.** With the can against the palm every run stops at thumb 0.20 ± 0.01, index 0.21,
+  middle 0.28 ± 0.01, ring 0.26 ± 0.02, pinky 0.20 ± 0.01 — 8 of 8 runs, both protocols, both speeds. In the demo this
+  is a free grasp check: fingers stopping near these values = can in hand; fingers running past ~0.45 = missed.
+* **Tracking latency ≈ 55 ms** (bridge 100 Hz + Modbus + finger controller): the actual lags the command by 0.02 at
+  0.4/s, 0.04 at 0.8/s, 0.10 at 1.2/s. Contact threshold must be ≥ 0.06 × rate + 0.03; 0.07 is safe up to 0.8/s,
+  1.2/s needed 0.10 and ran at the edge. A 1.2/s close reaches the can in 0.25–0.32 s, 0.8/s in 0.34–0.45 s.
+* **Thumb lag 0.3 s changes the grasp**: fingers wrap deeper (0.28–0.34) and the thumb meets the can at 0.06 — the
+  fingers push the can into the thumb root before the thumb flexes. Cradle rather than pinch; both hold.
+* **Squeeze +0.20 vs +0.10 is invisible in the state** (hold currents 9–25 mA either way; non-backdrivable drives).
+  Only a pull test ranks them.
+* **Offset runs ended in the same contact map** — the closing fingers drag a loosely held can back against the palm,
+  so a 2–4 cm standoff at the basket is recovered by the hand itself (to be confirmed with the operator's account).
+* Transients are unchanged by ramping: single-sample braking spikes of 1.3–2.4 A at each finger's stop in every
+  mode; steady hold ≤ 26 mA.
+
+**Recommended demo recipe (both hands):** pre-shape `thumb_aux` → 1.0 during the approach (1.2 s ramp); close with
+`--mode ramp --ramp-rate 0.8 --speed 1.0 --stall-threshold 0.07 --squeeze 0.10` (optionally `--squeeze-seconds 0.2`,
+`--thumb-lag 0.3` for the cradle); verify contact map; release with a 0.8 s finger ramp, thumb_aux last.
+
 ## Safe next steps on the real robot (in order)
 
 1. **Measure the adapter** (calipers): wrist flange face → Revo 2 base flange; also confirm fingers-along-forearm,

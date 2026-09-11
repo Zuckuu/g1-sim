@@ -82,6 +82,13 @@ with `robot/g1_snapshot.py` (details and every number in `docs/robot/README.md`)
   the true friction and stall currents the sim is guessing at; (2) in sim, close-first-then-press (fingers drag the can
   into the palm before the arm loads it), thumb opposition lower on the can, and a cup-shaped insert the can can pivot
   in; (3) top grasp with fingertips hooked under the seam rather than on the neck.
+* **Real hands hold the can (22:10–22:45).** Right first, then reproduced on the left with `robot/revo2_hand_test.py`:
+  thumb across (`thumb_aux` 1.0), fingers stop on a palm-staged can at thumb 0.20 / index 0.21 / middle 0.28 /
+  ring 0.26 / pinky 0.20 of their range, hold at +0.10 with zero current (non-backdrivable drives), zero drift.
+  Smooth continuous-ramp closes reach the can in 0.35–0.45 s at 0.8/s with the same contact map in 8/8 runs; the map
+  doubles as a grasp check. Details and the demo recipe in `docs/robot/README.md`. **Sim consequence:** the grasp to
+  model is palm contact + opposed thumb + fingers at 20–30 % flexion with a stiff position hold, not a deep torque-
+  limited wrap; the can must be brought against the palm by the arm (or dragged in by the fingers) before closing.
 
 ## Simulation tracks (this laptop)
 
