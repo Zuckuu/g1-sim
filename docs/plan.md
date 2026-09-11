@@ -56,6 +56,23 @@ fires), (2) thumb-first close with current-limited fingers (`--finger-effort 0.4
 fingers report stall, (4) basket-insert geometry in the scene since that is the demo. On the bench, the same three
 questions decide everything, which is why the power adapter matters this week.
 
+## Status after first contact with the real robot (2026-09-10, 21:30)
+
+The G1 is here, on its stand, freshly booted, zero-torque, SSH from this laptop works (`ssh g1`). Read-only capture
+with `robot/g1_snapshot.py` (details and every number in `docs/robot/README.md`):
+
+* It is a 29-DoF G1 (`mode_machine 5`), motion mode `ai`, battery 69 % / SOH 91 % / 44 cycles, `rt/lowstate` at 1 kHz.
+* The **right Revo 2 (Touch, serial BCXTR2265J2500018, fw 1.0.9.U) is mounted and live** on `rt/brainco/right/state` at
+  ~60 Hz through Unitree's `brainco_hand_service`. The **left hand is not detected** on any RS-485 port.
+* Someone already worked on this robot in August (`brainco_hand_service/test/interactive_hand.cpp`, arm_sdk poses,
+  aliases). Their arm gains are Unitree's `rt/arm_sdk` example gains, **kp 60 / kd 1.5**.
+* Sim consequence, tested tonight: with those real arm gains the palm-press approach collapses (palm error 17 → 60 mm
+  on contact, elbow at its limit, no lift) where the stiffer RL sim gains lifted the bottle out. Arm stiffness under
+  arm_sdk is now the first hardware parameter to establish; `g1_walk_grasp.py --arm-gains arm_sdk --arm-sdk-kp N`
+  runs the sim at any candidate value.
+* Gates that moved: the Revo 2 bench test no longer needs a power adapter (the robot powers the hand); it becomes a
+  hand-only DDS test on the mounted right hand, robot left in zero-torque on the stand.
+
 ## Simulation tracks (this laptop)
 
 * `sim/revo2_hand_grasp.py`: hand-only grasp physics. Use it to fix the approach pose (bottle centre ≈ 35 mm past

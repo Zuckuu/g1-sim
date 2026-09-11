@@ -65,6 +65,17 @@ parser.add_argument("--dt", type=float, default=0.005, help="physics step; contr
 parser.add_argument("--solver-iters", type=int, default=16, help="articulation position solver iterations (velocity = 1/8 of this, min 1)")
 parser.add_argument("--ik-gain", type=float, default=0.3, help="fraction of the IK Newton step applied to the commanded target per 50 Hz tick")
 parser.add_argument("--arm-kp-scale", type=float, default=1.0, help="multiply the grasping arm's PD stiffness/damping from the approach on (diagnostic for arm compliance)")
+parser.add_argument("--arm-gains", choices=["grasp", "teleop", "arm_sdk", "sim"], default="grasp",
+                    help="PD gains on the grasping arm once it leaves the standing pose (raise phase on), all sent over rt/arm_sdk on the real "
+                         "robot (docs/robot/README.md, arm stiffness study). 'grasp' = uniform kp 120 / kd 3, the profile that holds the "
+                         "bottle through the lift in sim and our proposal for the real arm. 'teleop' = what Unitree's xr_teleoperate and "
+                         "BrainCo's stack send this G1: shoulders+elbow 300/3, wrists 40/1.5 (fails the palm press in sim). 'arm_sdk' = "
+                         "Unitree's minimal arm7 example, --arm-sdk-kp/--arm-sdk-kd on all 7 joints (60/1.5 default; too soft). "
+                         "'sim' = Unitree's whole-body RL sim gains (shoulders 100/2, elbow 50/2, wrists 40/2; last night's runs)")
+parser.add_argument("--arm-sdk-kp", type=float, default=60.0)
+parser.add_argument("--arm-sdk-kd", type=float, default=1.5)
+parser.add_argument("--wrist-kp", type=float, default=None, help="override the wrist kp in the teleop/arm_sdk profiles (sim study: the wrist is the joint the palm press loads)")
+parser.add_argument("--wrist-kd", type=float, default=None)
 parser.add_argument("--policy", type=str, default=str(POLICY), help="ONNX locomotion policy path")
 
 from isaaclab.app import AppLauncher  # noqa: E402
@@ -790,6 +801,27 @@ def main():
                     palm_goal = torch.stack([palm_start[0], palm_start[1] - 0.05, up[2] + 0.05])
                     quat_start = q_hb[0].clone()
                     move_T = 1.5 * args.arm_time_scale
+                    if args.arm_gains != "sim":
+                        # the real arm runs on whatever kp/kd we put in rt/arm_sdk (measured on the robot, docs/robot/):
+                        # Unitree's teleop uses 300/3 on shoulder+elbow and 40/1.5 on the wrists; the minimal example 60/1.5
+                        if args.arm_gains == "teleop":
+                            kp_l = [40.0 if "wrist" in n else 300.0 for n in SIDE_ARM]
+                            kd_l = [1.5 if "wrist" in n else 3.0 for n in SIDE_ARM]
+                        elif args.arm_gains == "grasp":
+                            kp_l = [120.0] * len(SIDE_ARM)
+                            kd_l = [3.0] * len(SIDE_ARM)
+                        else:
+                            kp_l = [args.arm_sdk_kp] * len(SIDE_ARM)
+                            kd_l = [args.arm_sdk_kd] * len(SIDE_ARM)
+                        if args.wrist_kp is not None:
+                            kp_l = [args.wrist_kp if "wrist" in n else k for n, k in zip(SIDE_ARM, kp_l)]
+                        if args.wrist_kd is not None:
+                            kd_l = [args.wrist_kd if "wrist" in n else k for n, k in zip(SIDE_ARM, kd_l)]
+                        kp = torch.tensor([kp_l], device=sim.device)
+                        kd = torch.tensor([kd_l], device=sim.device)
+                        robot.write_joint_stiffness_to_sim(kp, joint_ids=arm_ids)
+                        robot.write_joint_damping_to_sim(kd, joint_ids=arm_ids)
+                        print(f"G1_ARM_GAINS {args.arm_gains}: kp={kp_l} kd={kd_l} on {side} arm {SIDE_ARM}", flush=True)
                     log_phase("raise")
             elif phase == "raise":
                 if t - phase_t0 > move_T + 0.5:

@@ -1,0 +1,913 @@
+{
+ "captured_at": "2026-09-10T21:22:32-0500",
+ "host": {
+  "hostname": "ubuntu",
+  "platform": "Linux-5.10.104-tegra-aarch64-with-glibc2.17",
+  "python": "3.8.20",
+  "iface": "eth0",
+  "domain": 0,
+  "group": "cmd"
+ },
+ "capture_seconds": 4.004071474075317,
+ "topics": {
+  "rt/lowcmd": {
+   "count": 3897,
+   "rate_hz": 997.8088259044108,
+   "last": {
+    "mode_pr": 0,
+    "mode_machine": 5,
+    "motor_cmd": [
+     {
+      "mode": 1,
+      "q": 0.0,
+      "dq": 0.0,
+      "tau": 0.0,
+      "kp": 0.0,
+      "kd": 0.0,
+      "reserve": 0
+     },
+     {
+      "mode": 1,
+      "q": 0.0,
+      "dq": 0.0,
+      "tau": 0.0,
+      "kp": 0.0,
+      "kd": 0.0,
+      "reserve": 0
+     },
+     {
+      "mode": 1,
+      "q": 0.0,
+      "dq": 0.0,
+      "tau": 0.0,
+      "kp": 0.0,
+      "kd": 0.0,
+      "reserve": 0
+     },
+     {
+      "mode": 1,
+      "q": 0.0,
+      "dq": 0.0,
+      "tau": 0.0,
+      "kp": 0.0,
+      "kd": 0.0,
+      "reserve": 0
+     },
+     {
+      "mode": 1,
+      "q": 0.0,
+      "dq": 0.0,
+      "tau": 0.0,
+      "kp": 0.0,
+      "kd": 0.0,
+      "reserve": 0
+     },
+     {
+      "mode": 1,
+      "q": 0.0,
+      "dq": 0.0,
+      "tau": 0.0,
+      "kp": 0.0,
+      "kd": 0.0,
+      "reserve": 0
+     },
+     {
+      "mode": 1,
+      "q": 0.0,
+      "dq": 0.0,
+      "tau": 0.0,
+      "kp": 0.0,
+      "kd": 0.0,
+      "reserve": 0
+     },
+     {
+      "mode": 1,
+      "q": 0.0,
+      "dq": 0.0,
+      "tau": 0.0,
+      "kp": 0.0,
+      "kd": 0.0,
+      "reserve": 0
+     },
+     {
+      "mode": 1,
+      "q": 0.0,
+      "dq": 0.0,
+      "tau": 0.0,
+      "kp": 0.0,
+      "kd": 0.0,
+      "reserve": 0
+     },
+     {
+      "mode": 1,
+      "q": 0.0,
+      "dq": 0.0,
+      "tau": 0.0,
+      "kp": 0.0,
+      "kd": 0.0,
+      "reserve": 0
+     },
+     {
+      "mode": 1,
+      "q": 0.0,
+      "dq": 0.0,
+      "tau": 0.0,
+      "kp": 0.0,
+      "kd": 0.0,
+      "reserve": 0
+     },
+     {
+      "mode": 1,
+      "q": 0.0,
+      "dq": 0.0,
+      "tau": 0.0,
+      "kp": 0.0,
+      "kd": 0.0,
+      "reserve": 0
+     },
+     {
+      "mode": 1,
+      "q": 0.0,
+      "dq": 0.0,
+      "tau": 0.0,
+      "kp": 0.0,
+      "kd": 0.0,
+      "reserve": 0
+     },
+     {
+      "mode": 1,
+      "q": 0.0,
+      "dq": 0.0,
+      "tau": 0.0,
+      "kp": 0.0,
+      "kd": 0.0,
+      "reserve": 0
+     },
+     {
+      "mode": 1,
+      "q": 0.0,
+      "dq": 0.0,
+      "tau": 0.0,
+      "kp": 0.0,
+      "kd": 0.0,
+      "reserve": 0
+     },
+     {
+      "mode": 1,
+      "q": 0.0,
+      "dq": 0.0,
+      "tau": 0.0,
+      "kp": 0.0,
+      "kd": 0.0,
+      "reserve": 0
+     },
+     {
+      "mode": 1,
+      "q": 0.0,
+      "dq": 0.0,
+      "tau": 0.0,
+      "kp": 0.0,
+      "kd": 0.0,
+      "reserve": 0
+     },
+     {
+      "mode": 1,
+      "q": 0.0,
+      "dq": 0.0,
+      "tau": 0.0,
+      "kp": 0.0,
+      "kd": 0.0,
+      "reserve": 0
+     },
+     {
+      "mode": 1,
+      "q": 0.0,
+      "dq": 0.0,
+      "tau": 0.0,
+      "kp": 0.0,
+      "kd": 0.0,
+      "reserve": 0
+     },
+     {
+      "mode": 1,
+      "q": 0.0,
+      "dq": 0.0,
+      "tau": 0.0,
+      "kp": 0.0,
+      "kd": 0.0,
+      "reserve": 0
+     },
+     {
+      "mode": 1,
+      "q": 0.0,
+      "dq": 0.0,
+      "tau": 0.0,
+      "kp": 0.0,
+      "kd": 0.0,
+      "reserve": 0
+     },
+     {
+      "mode": 1,
+      "q": 0.0,
+      "dq": 0.0,
+      "tau": 0.0,
+      "kp": 0.0,
+      "kd": 0.0,
+      "reserve": 0
+     },
+     {
+      "mode": 1,
+      "q": 0.0,
+      "dq": 0.0,
+      "tau": 0.0,
+      "kp": 0.0,
+      "kd": 0.0,
+      "reserve": 0
+     },
+     {
+      "mode": 1,
+      "q": 0.0,
+      "dq": 0.0,
+      "tau": 0.0,
+      "kp": 0.0,
+      "kd": 0.0,
+      "reserve": 0
+     },
+     {
+      "mode": 1,
+      "q": 0.0,
+      "dq": 0.0,
+      "tau": 0.0,
+      "kp": 0.0,
+      "kd": 0.0,
+      "reserve": 0
+     },
+     {
+      "mode": 1,
+      "q": 0.0,
+      "dq": 0.0,
+      "tau": 0.0,
+      "kp": 0.0,
+      "kd": 0.0,
+      "reserve": 0
+     },
+     {
+      "mode": 1,
+      "q": 0.0,
+      "dq": 0.0,
+      "tau": 0.0,
+      "kp": 0.0,
+      "kd": 0.0,
+      "reserve": 0
+     },
+     {
+      "mode": 1,
+      "q": 0.0,
+      "dq": 0.0,
+      "tau": 0.0,
+      "kp": 0.0,
+      "kd": 0.0,
+      "reserve": 0
+     },
+     {
+      "mode": 1,
+      "q": 0.0,
+      "dq": 0.0,
+      "tau": 0.0,
+      "kp": 0.0,
+      "kd": 0.0,
+      "reserve": 0
+     },
+     {
+      "mode": 1,
+      "q": 0.0,
+      "dq": 0.0,
+      "tau": 0.0,
+      "kp": 0.0,
+      "kd": 0.0,
+      "reserve": 0
+     },
+     {
+      "mode": 1,
+      "q": 0.0,
+      "dq": 0.0,
+      "tau": 0.0,
+      "kp": 0.0,
+      "kd": 0.0,
+      "reserve": 0
+     },
+     {
+      "mode": 1,
+      "q": 0.0,
+      "dq": 0.0,
+      "tau": 0.0,
+      "kp": 0.0,
+      "kd": 0.0,
+      "reserve": 0
+     },
+     {
+      "mode": 1,
+      "q": 0.0,
+      "dq": 0.0,
+      "tau": 0.0,
+      "kp": 0.0,
+      "kd": 0.0,
+      "reserve": 0
+     },
+     {
+      "mode": 1,
+      "q": 0.0,
+      "dq": 0.0,
+      "tau": 0.0,
+      "kp": 0.0,
+      "kd": 0.0,
+      "reserve": 0
+     },
+     {
+      "mode": 1,
+      "q": 0.0,
+      "dq": 0.0,
+      "tau": 0.0,
+      "kp": 0.0,
+      "kd": 0.0,
+      "reserve": 0
+     }
+    ],
+    "reserve": [
+     0,
+     0,
+     0,
+     0
+    ],
+    "crc": 1998024505
+   }
+  },
+  "rt/arm_sdk": {
+   "count": 0,
+   "rate_hz": null,
+   "last": null
+  },
+  "rt/user_lowcmd": {
+   "count": 0,
+   "rate_hz": null,
+   "last": null
+  }
+ },
+ "summary": {
+  "lowcmd": {
+   "rate_hz": 997.8088259044108,
+   "note": "PD gains the motion controller is streaming to the motors right now (mode-dependent).",
+   "mode_machine": 5,
+   "mode_pr": 0,
+   "kp": {
+    "left_hip_pitch": 0.0,
+    "left_hip_roll": 0.0,
+    "left_hip_yaw": 0.0,
+    "left_knee": 0.0,
+    "left_ankle_pitch": 0.0,
+    "left_ankle_roll": 0.0,
+    "right_hip_pitch": 0.0,
+    "right_hip_roll": 0.0,
+    "right_hip_yaw": 0.0,
+    "right_knee": 0.0,
+    "right_ankle_pitch": 0.0,
+    "right_ankle_roll": 0.0,
+    "waist_yaw": 0.0,
+    "waist_roll": 0.0,
+    "waist_pitch": 0.0,
+    "left_shoulder_pitch": 0.0,
+    "left_shoulder_roll": 0.0,
+    "left_shoulder_yaw": 0.0,
+    "left_elbow": 0.0,
+    "left_wrist_roll": 0.0,
+    "left_wrist_pitch": 0.0,
+    "left_wrist_yaw": 0.0,
+    "right_shoulder_pitch": 0.0,
+    "right_shoulder_roll": 0.0,
+    "right_shoulder_yaw": 0.0,
+    "right_elbow": 0.0,
+    "right_wrist_roll": 0.0,
+    "right_wrist_pitch": 0.0,
+    "right_wrist_yaw": 0.0,
+    "slot29": 0.0,
+    "slot30": 0.0,
+    "slot31": 0.0,
+    "slot32": 0.0,
+    "slot33": 0.0,
+    "slot34": 0.0
+   },
+   "kd": {
+    "left_hip_pitch": 0.0,
+    "left_hip_roll": 0.0,
+    "left_hip_yaw": 0.0,
+    "left_knee": 0.0,
+    "left_ankle_pitch": 0.0,
+    "left_ankle_roll": 0.0,
+    "right_hip_pitch": 0.0,
+    "right_hip_roll": 0.0,
+    "right_hip_yaw": 0.0,
+    "right_knee": 0.0,
+    "right_ankle_pitch": 0.0,
+    "right_ankle_roll": 0.0,
+    "waist_yaw": 0.0,
+    "waist_roll": 0.0,
+    "waist_pitch": 0.0,
+    "left_shoulder_pitch": 0.0,
+    "left_shoulder_roll": 0.0,
+    "left_shoulder_yaw": 0.0,
+    "left_elbow": 0.0,
+    "left_wrist_roll": 0.0,
+    "left_wrist_pitch": 0.0,
+    "left_wrist_yaw": 0.0,
+    "right_shoulder_pitch": 0.0,
+    "right_shoulder_roll": 0.0,
+    "right_shoulder_yaw": 0.0,
+    "right_elbow": 0.0,
+    "right_wrist_roll": 0.0,
+    "right_wrist_pitch": 0.0,
+    "right_wrist_yaw": 0.0,
+    "slot29": 0.0,
+    "slot30": 0.0,
+    "slot31": 0.0,
+    "slot32": 0.0,
+    "slot33": 0.0,
+    "slot34": 0.0
+   },
+   "mode": {
+    "left_hip_pitch": 1,
+    "left_hip_roll": 1,
+    "left_hip_yaw": 1,
+    "left_knee": 1,
+    "left_ankle_pitch": 1,
+    "left_ankle_roll": 1,
+    "right_hip_pitch": 1,
+    "right_hip_roll": 1,
+    "right_hip_yaw": 1,
+    "right_knee": 1,
+    "right_ankle_pitch": 1,
+    "right_ankle_roll": 1,
+    "waist_yaw": 1,
+    "waist_roll": 1,
+    "waist_pitch": 1,
+    "left_shoulder_pitch": 1,
+    "left_shoulder_roll": 1,
+    "left_shoulder_yaw": 1,
+    "left_elbow": 1,
+    "left_wrist_roll": 1,
+    "left_wrist_pitch": 1,
+    "left_wrist_yaw": 1,
+    "right_shoulder_pitch": 1,
+    "right_shoulder_roll": 1,
+    "right_shoulder_yaw": 1,
+    "right_elbow": 1,
+    "right_wrist_roll": 1,
+    "right_wrist_pitch": 1,
+    "right_wrist_yaw": 1,
+    "slot29": 1,
+    "slot30": 1,
+    "slot31": 1,
+    "slot32": 1,
+    "slot33": 1,
+    "slot34": 1
+   },
+   "q_target_rad": {
+    "left_hip_pitch": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "left_hip_roll": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "left_hip_yaw": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "left_knee": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "left_ankle_pitch": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "left_ankle_roll": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "right_hip_pitch": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "right_hip_roll": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "right_hip_yaw": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "right_knee": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "right_ankle_pitch": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "right_ankle_roll": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "waist_yaw": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "waist_roll": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "waist_pitch": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "left_shoulder_pitch": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "left_shoulder_roll": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "left_shoulder_yaw": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "left_elbow": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "left_wrist_roll": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "left_wrist_pitch": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "left_wrist_yaw": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "right_shoulder_pitch": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "right_shoulder_roll": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "right_shoulder_yaw": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "right_elbow": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "right_wrist_roll": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "right_wrist_pitch": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "right_wrist_yaw": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "slot29": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "slot30": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "slot31": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "slot32": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "slot33": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "slot34": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    }
+   },
+   "tau_ff_Nm": {
+    "left_hip_pitch": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "left_hip_roll": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "left_hip_yaw": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "left_knee": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "left_ankle_pitch": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "left_ankle_roll": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "right_hip_pitch": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "right_hip_roll": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "right_hip_yaw": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "right_knee": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "right_ankle_pitch": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "right_ankle_roll": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "waist_yaw": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "waist_roll": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "waist_pitch": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "left_shoulder_pitch": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "left_shoulder_roll": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "left_shoulder_yaw": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "left_elbow": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "left_wrist_roll": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "left_wrist_pitch": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "left_wrist_yaw": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "right_shoulder_pitch": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "right_shoulder_roll": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "right_shoulder_yaw": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "right_elbow": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "right_wrist_roll": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "right_wrist_pitch": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "right_wrist_yaw": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "slot29": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "slot30": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "slot31": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "slot32": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "slot33": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    },
+    "slot34": {
+     "mean": 0.0,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0
+    }
+   }
+  },
+  "arm_sdk": {
+   "rate_hz": null,
+   "count": 0,
+   "weight_last": null,
+   "weight_max": null,
+   "kp_arm_last": null,
+   "kd_arm_last": null,
+   "note": "Non-zero rate = something (usually Unitree's built-in arm service) is publishing arm_sdk. weight>0 means it is actually steering the arms."
+  },
+  "user_lowcmd": {
+   "count": 0,
+   "rate_hz": null
+  },
+  "capture_seconds": 4.004071474075317
+ }
+}

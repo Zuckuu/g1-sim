@@ -36,6 +36,8 @@ sim/                 Isaac Sim 5.0 / Isaac Lab 2.2 scripts (run with sim/run.sh 
   pepsidemo_sim.py      shared helpers (trimmed Isaac Lab experience files, paths)
   start-isaac-smoke.sh  the original environment bootstrap (already executed; kept as the install recipe)
 hand/                physical Revo 2 bench test over USB-RS485 (hand/README.md, revo2_bench.py)
+robot/               the real G1: g1_snapshot.py (read-only DDS capture), assets/from-robot (Unitree's BrainCo URDFs)
+docs/robot/          values pulled from the live robot 2026-09-10 and the real-vs-sim comparison (README.md)
 work/                (git-ignored, ~22 GB) runtime + vendored sources:
   g1-runtime/isaac50    Python 3.11 venv: isaacsim 5.0.0, isaaclab 0.44.9 (editable), torch 2.7.0+cu128
   g1-runtime/downloads  unitree-assets.zip (1.3 GB, sha256-verified) ; g1-runtime/usd  converted USDs ; g1-runtime/logs

@@ -1,0 +1,12 @@
+1970-01-24T03:08:13-0600 ubuntu brainco_hand_server[1863]: [1970-01-24 03:08:13.425] [warning] Failed to get device info from /dev/ttyUSB3 port
+1970-01-24T03:08:13-0600 ubuntu brainco_hand_server[1863]: [1970-01-24 03:08:13.635] [warning] Failed to get device info from /dev/ttyUSB2 port
+1970-01-24T03:08:13-0600 ubuntu brainco_hand_server[1863]: [1970-01-24 03:08:13.844] [warning] Failed to get device info from /dev/ttyUSB1 port
+1970-01-24T03:08:14-0600 ubuntu brainco_hand_server[1863]: [1970-01-24 03:08:14.054] [warning] Failed to get device info from /dev/ttyUSB0 port
+1970-01-24T03:08:14-0600 ubuntu brainco_hand_server[1863]: [1970-01-24 03:08:14.262] [warning] Failed to get device info from /dev/ttyUSB3 port
+1970-01-24T03:08:14-0600 ubuntu brainco_hand_server[1863]: [1970-01-24 03:08:14.473] [warning] Failed to get device info from /dev/ttyUSB2 port
+1970-01-24T03:08:14-0600 ubuntu brainco_hand_server[1863]: [1970-01-24 03:08:14.495] [info] Hand hardware_type: 6
+1970-01-24T03:08:14-0600 ubuntu brainco_hand_server[1863]: [1970-01-24 03:08:14.495] [info] Hand sku_type: 1
+1970-01-24T03:08:14-0600 ubuntu brainco_hand_server[1863]: [1970-01-24 03:08:14.495] [info] Hand firmware_version: 1.0.9.U
+1970-01-24T03:08:14-0600 ubuntu brainco_hand_server[1863]: [1970-01-24 03:08:14.495] [info] Hand serial_number: BCXTR2265J2500018
+1970-01-24T03:08:14-0600 ubuntu brainco_hand_server[1863]: [1970-01-24 03:08:14.496] [info] right hand bound to /dev/ttyUSB1 port
+1970-01-24T03:08:14-0600 ubuntu brainco_hand_server[1863]: [1970-01-24 03:08:14.496] [info] 🚀 Starting worker for right (slave 127)
