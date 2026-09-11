@@ -1,0 +1,74 @@
+{
+  "name": "pepsi-12oz-can",
+  "kind": "can",
+  "obj": "/home/nicholas/Projects/PepsiDemo/assets/bottles/pepsi-12oz-can.obj",
+  "height": 0.1224,
+  "max_diameter": 0.0662,
+  "mass_full_kg": 0.38,
+  "default_grasp_height": 0.06,
+  "waist_ratio": 1.0,
+  "waist_center_frac": 0.5,
+  "volume_m3": 0.0003890447370373413,
+  "centroid_z": 0.06131500713928061,
+  "faces": 1728,
+  "origin": "base centre, +Z up",
+  "radius_at_height": {
+    "0.020": 0.0331,
+    "0.030": 0.0331,
+    "0.040": 0.0331,
+    "0.050": 0.0331,
+    "0.060": 0.0331,
+    "0.070": 0.0331,
+    "0.080": 0.0331,
+    "0.090": 0.0331,
+    "0.100": 0.0331,
+    "0.110": 0.028175883694412776
+  },
+  "profile_rz": [
+    [
+      0.0,
+      0.0
+    ],
+    [
+      0.0245,
+      0.0
+    ],
+    [
+      0.030782999999999998,
+      0.0035
+    ],
+    [
+      0.0331,
+      0.011
+    ],
+    [
+      0.0331,
+      0.10036799999999999
+    ],
+    [
+      0.0285,
+      0.1087872
+    ],
+    [
+      0.027,
+      0.1144
+    ],
+    [
+      0.027,
+      0.1224
+    ],
+    [
+      0.0235,
+      0.1224
+    ],
+    [
+      0.0235,
+      0.11789999999999999
+    ],
+    [
+      0.0,
+      0.11789999999999999
+    ]
+  ],
+  "note": "dimensions are public approximations of the real bottle; styling is not reproduced"
+}

@@ -26,7 +26,7 @@ scp robot/g1_snapshot.py g1:/tmp/ && ssh g1 "$PY /tmp/g1_snapshot.py --group bod
 | Battery | 13S pack, 50.5 V (cells 3.883–3.888 V), **SOC 69 %, SOH 91 %, 44 cycles**, −2.15 A idle (≈110 W with Jetson), 24–28 °C |
 | Motor temps | 31–43 °C at rest (motors had been powered) |
 | Right hand | **BrainCo Revo 2, serial `BCXTR2265J2500018`** (XT = Touch variant), hardware_type 6, sku_type 1, firmware **1.0.9.U**, Modbus slave 127 on `/dev/ttyUSB1` @ 460800 |
-| Left hand | **not detected** — `brainco_hand_server` probed ttyUSB0–3 for slave 126 (0x7e) and got no device info. Cable, power, or slave-ID problem to check. |
+| Left hand | **BrainCo Revo 2, serial `BCXTL2265J2500018`** (Touch left, sku MEDIUM_LEFT), firmware 1.0.9.U, Modbus slave 126 on `/dev/ttyUSB2` @ 460800. Was **not detected at boot**: the service scans each port once, the left hand had not answered Modbus yet (green LED = 24 V only), and there is no retry. `sudo systemctl restart brainco_hand.service` found both hands in 0.5 s; `rt/brainco/left/state` now live at ~65 Hz. |
 | USB-485 | FTDI FT4232H quad UART (ttyUSB0–3), Realtek hubs. No Intel RealSense on the bus → no head camera visible. `lidar_driver` stopped, no `rt/utlidar/*` topics. |
 
 ## What is running on the robot (services, `robot_state.ServiceList`)
@@ -124,8 +124,10 @@ BrainCo's serial order is [thumb, thumb_aux, index, middle, ring, pinky] — not
 
 1. **Measure the adapter** (calipers): wrist flange face → Revo 2 base flange; also confirm fingers-along-forearm,
    palm-to-midline, thumb-up orientation. Feeds `sim/build_g1_revo2_urdf.py --adapter-offset`.
-2. **Left hand**: check its 485 cable and power at the wrist; `journalctl -u brainco_hand.service -f` while replugging.
-   If it enumerates but not as slave 126, BrainCo's SDK can read/set the slave ID.
+2. ~~Left hand~~ — done: it was a boot-order race in `brainco_hand_service`, not hardware. After any power cycle,
+   if only one hand publishes, `sudo systemctl restart brainco_hand.service`. (A retry loop or `ExecStartPre=sleep 10`
+   in the unit would remove the manual step.) `robot/probe_hands.cpp` is the read-only per-port / per-slave-ID probe
+   that found it.
 3. **Right hand open/close cycles** (hand only, robot stays zero-torque on the stand): publish `rt/brainco/right/cmd`
    with speed 1.0, log `rt/brainco/right/state` → real close time, per-finger stall current on nothing and on the
    20 oz bottle held into the palm by hand. That calibrates `--finger-effort` and the stall angle in the sim.

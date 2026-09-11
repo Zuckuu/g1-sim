@@ -71,7 +71,17 @@ with `robot/g1_snapshot.py` (details and every number in `docs/robot/README.md`)
   arm_sdk is now the first hardware parameter to establish; `g1_walk_grasp.py --arm-gains arm_sdk --arm-sdk-kp N`
   runs the sim at any candidate value.
 * Gates that moved: the Revo 2 bench test no longer needs a power adapter (the robot powers the hand); it becomes a
-  hand-only DDS test on the mounted right hand, robot left in zero-torque on the stand.
+  hand-only DDS test on the mounted hands, robot left in zero-torque on the stand. Both hands are online (the left
+  was a boot-order race in `brainco_hand_service`, fixed by a service restart).
+* **12 oz can, first sim results (21:50):** the bottle recipe does not transfer. Whole robot, fixed base, `grasp`
+  gains, can in a 40 mm insert: the 3 mm palm press shoves the 0.38 kg can over the insert wall (`sim-grasp-fixedbase-can-1`);
+  without the press, grasp heights 45–60 mm and finger effort 0.3–0.35 lift it 1.7–2.2 cm and drop it (`can-a`, `-c`);
+  a 50 mm insert puts the fingers into the wall (`can-b`). Hand-only top grasp (palm on the lid, fingers down the
+  neck), 9 placements, effort 0.4: 0/9. The can is short, light and smooth: the partial finger wrap pushes it out of
+  the hand instead of into the palm. Next: (1) the real right hand on a real can — five minutes on the robot tells us
+  the true friction and stall currents the sim is guessing at; (2) in sim, close-first-then-press (fingers drag the can
+  into the palm before the arm loads it), thumb opposition lower on the can, and a cup-shaped insert the can can pivot
+  in; (3) top grasp with fingertips hooked under the seam rather than on the neck.
 
 ## Simulation tracks (this laptop)
 
@@ -99,7 +109,11 @@ with `robot/g1_snapshot.py` (details and every number in `docs/robot/README.md`)
 2. **No power adapter yet.** The Pro/Touch box has the power cable; BrainCo's adapter is 24 V with an XT30 plug, so any
    24 V bench supply + XT30 pigtail works (confirm polarity on the cable). Also needed: a USB-RS485 dongle (BrainCo's
    dual-port kit, or a generic CH340/FTDI one on the supplied 485 cable). Bench test blocked until both are in hand.
-3. Demo bottle: **standard US 20 oz Pepsi** (222 mm, 72.8 mm, ~0.64 kg full). Modelled; measure the grip-zone diameter.
+3. ~~Demo bottle: standard US 20 oz Pepsi~~ **Superseded 2026-09-10 21:45: the demo serves 12 oz cans** (Pepsi blue,
+   Diet Pepsi silver; 122 mm tall, 66.2 mm body, 54 mm top seam, ~0.38 kg full). Modelled as `pepsi-12oz-can`
+   (`assets/bottles/`), now the default object in both sim scripts, grasp height 60 mm (mid-body). Zack's
+   `roundtable_sim` already used exactly this can. Consequences: fits the 100 mm opening easily and is 40 % lighter
+   than the bottle, but it is short, smooth aluminium, and tips or pops out of a shallow insert when pushed.
 
 ## Still open
 

@@ -1,9 +1,10 @@
 # PepsiDemo — Unitree G1 + BrainCo Revo 2 bottle-serving demo
 
 Target: in ~2 weeks, a G1 humanoid with BrainCo Revo 2 dexterous hands follows two basket carriers through a
-room of PepsiCo executives, asks each guest "Pepsi or Diet Pepsi?", picks the right bottle out of the basket
-and hands it over, until someone says "Pepsi delivered". Robot arrival date unknown; the two Revo 2 hands are in
-hand now; everything else starts in simulation on this laptop (RTX 5060 Laptop, 8 GB VRAM).
+room of PepsiCo executives, asks each guest "Pepsi or Diet Pepsi?", picks the right **12 oz can** out of the basket
+and hands it over, until someone says "Pepsi delivered". Status 2026-09-10 evening: the G1 is here with both Revo 2
+Touch hands mounted and live (`docs/robot/`); the demo object changed from the 20 oz bottle to standard 12 oz cans
+(`assets/bottles/pepsi-12oz-can.*`, default in the sim scripts). The bottle results below are kept as history.
 
 Hardware pivot (2026-09-09): the hands are **BrainCo Revo 2**, not Unitree Dex3. Dex3 datasets, joint mappings
 and Unitree's Dex3 sim tasks do not transfer. Revo 2 facts that drive the design:

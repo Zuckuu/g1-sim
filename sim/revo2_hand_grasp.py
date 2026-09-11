@@ -45,10 +45,11 @@ parser.add_argument("--grasp-mode", choices=["side", "top"], default="side",
 parser.add_argument("--model", choices=list(MODELS), default="official-urdf")
 parser.add_argument("--model-urdf", type=str, default="", help="explicit hand URDF path (overrides --model)")
 parser.add_argument("--raw-urdf", action="store_true", help="import the URDF as-is. Default folds the empty fingertip frames and 2 g touch pads into the distal links; otherwise the Isaac importer gives each empty tip link a fake 1.0 kg mass (5 kg per hand) which made early grasps look far better than physics allows")
-parser.add_argument("--bottle", choices=["pepsi-500ml", "pepsi-20oz", "cylinder"], default="pepsi-500ml",
-                    help="bottle model: generated PET bottle presets, or the plain cylinder proxy")
+parser.add_argument("--bottle", choices=["pepsi-12oz-can", "pepsi-500ml", "pepsi-20oz", "cylinder"], default="pepsi-12oz-can",
+                    help="object model: generated presets (the demo serves 12 oz cans), or the plain cylinder proxy")
 parser.add_argument("--bottle-mesh", type=str, default="", help="OBJ/STL of a real bottle (metres, origin at base centre, +Z up); overrides --bottle")
-parser.add_argument("--grasp-height", type=float, default=0.10, help="m above the bottle base where the palm centre sits (mesh bottles); cylinder default = half height")
+parser.add_argument("--grasp-height", type=float, default=None,
+                    help="m above the object base where the palm centre sits; default per object: bottles 0.10, can 0.06, cylinder/custom mesh = half height")
 parser.add_argument("--bottle-radius", type=float, default=0.0325, help="cylinder proxy only: m; 0.0325 ~ 500 mL PET body, 0.0365 ~ 20 oz")
 parser.add_argument("--bottle-height", type=float, default=0.22, help="cylinder proxy only: m")
 parser.add_argument("--bottle-mass", type=float, default=None, help="kg; default: preset mass (500 mL 0.525, 20 oz 0.64, cylinder 0.55)")
@@ -310,7 +311,7 @@ def resolve_bottle():
         h = args.bottle_height
         return dict(kind="cylinder", name="cylinder", radius=args.bottle_radius, height=h,
                     mass=args.bottle_mass if args.bottle_mass is not None else 0.55,
-                    grasp_height=h / 2.0 if args.grasp_height == 0.10 else args.grasp_height, anchor=h / 2.0, obj=None)
+                    grasp_height=h / 2.0 if args.grasp_height is None else args.grasp_height, anchor=h / 2.0, obj=None)
     else:
         import make_bottle_mesh as mbm
         obj = mbm.OUT_DIR / f"{args.bottle}.obj"
@@ -318,10 +319,14 @@ def resolve_bottle():
             mbm.build(args.bottle, **mbm.PRESETS[args.bottle])
         name = args.bottle
         mass = args.bottle_mass if args.bottle_mass is not None else mbm.PRESETS[args.bottle]["mass"]
+        if args.grasp_height is None:
+            args.grasp_height = mbm.default_grasp_height(args.bottle)
     import trimesh
     mesh = trimesh.load(str(obj), force="mesh")
     zmin = float(mesh.bounds[0][2])
     height = float(mesh.bounds[1][2] - zmin)
+    if args.grasp_height is None:  # custom --bottle-mesh: middle of the object
+        args.grasp_height = height / 2.0
     gh = args.grasp_height
     # radius of the bottle at the grasp height: slice the mesh with a horizontal plane
     section = mesh.section(plane_origin=[0.0, 0.0, zmin + gh], plane_normal=[0.0, 0.0, 1.0])

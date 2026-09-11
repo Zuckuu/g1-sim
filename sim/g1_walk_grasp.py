@@ -1,4 +1,5 @@
-"""Unitree G1 29-DoF with BrainCo Revo 2 hands: stand, walk to a table, reach, grasp and lift a 20 oz bottle.
+"""Unitree G1 29-DoF with BrainCo Revo 2 hands: stand, walk to a table, reach, grasp and lift the demo object
+(default: a 12 oz Pepsi can; 20 oz / 500 mL bottles selectable).
 
 Pipeline (Isaac Sim 5.0 / Isaac Lab 2.2, CPU physics):
   1. Merged URDF (sim/build_g1_revo2_urdf.py) -> USD via the Isaac URDF importer (cached under work/g1-runtime/usd).
@@ -37,7 +38,8 @@ parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.R
 parser.add_argument("--phase", choices=["load", "ikcheck", "stand", "walk", "grasp", "all"], default="all")
 parser.add_argument("--fixed-base", action="store_true", help="pin the pelvis (no locomotion policy); arm + grasp only")
 parser.add_argument("--hand", choices=["right", "left"], default="right")
-parser.add_argument("--bottle", choices=["pepsi-20oz", "pepsi-500ml"], default="pepsi-20oz")
+parser.add_argument("--bottle", choices=["pepsi-12oz-can", "pepsi-20oz", "pepsi-500ml"], default="pepsi-12oz-can",
+                    help="object to grasp (assets/bottles/ presets; the demo serves 12 oz cans)")
 parser.add_argument("--table-x", type=float, default=1.6, help="m ahead of the robot start (floating base)")
 parser.add_argument("--bottle-y", type=float, default=-0.12, help="m lateral bottle offset on the table (negative = robot's right)")
 parser.add_argument("--table-height", type=float, default=None, help="table top height (m); default: pelvis start height - 0.02")
@@ -46,9 +48,10 @@ parser.add_argument("--reach-x", type=float, default=0.35, help="desired bottle 
 parser.add_argument("--stop-lead", type=float, default=0.20, help="command zero velocity this far before reach-x (stopping distance)")
 parser.add_argument("--gap", type=float, default=0.034)
 parser.add_argument("--distal-offset", type=float, default=0.040)
-parser.add_argument("--grasp-height", type=float, default=0.10)
+parser.add_argument("--grasp-height", type=float, default=None,
+                    help="palm centre above the object base (m); default per object: 0.10 on bottles, 0.06 on the can (mid-body, ~its CoM)")
 parser.add_argument("--lift", type=float, default=0.10)
-parser.add_argument("--holder", type=float, default=0.0, help="height (m) of a rigid insert around the bottle base (basket insert); 0 = none")
+parser.add_argument("--holder", type=float, default=0.0, help="height (m) of a rigid insert around the object base (basket insert, sized from the mesh + 3 mm); 0 = none")
 parser.add_argument("--finger-effort", type=float, default=1.5, help="finger drive torque limit Nm (the real hand is current-limited; 0.3-0.5 ~ gentle stall)")
 parser.add_argument("--press", type=float, default=0.0, help="m: approach target pushes the palm this far *into* the bottle surface before closing; released on lift")
 parser.add_argument("--arm-time-scale", type=float, default=1.0, help="multiply arm motion durations (slower = less disturbance to the balance policy)")
@@ -354,16 +357,22 @@ class LocoPolicy:
 
 
 def bottle_asset():
+    """USD of the demo object + (radius at grasp height, max radius, height, mass); resolves the per-object grasp height."""
     import make_bottle_mesh as mbm
     import trimesh
 
     obj = mbm.OUT_DIR / f"{args.bottle}.obj"
     if not obj.is_file():
         mbm.build(args.bottle, **mbm.PRESETS[args.bottle])
+    if args.grasp_height is None:
+        args.grasp_height = mbm.default_grasp_height(args.bottle)
     mesh = trimesh.load(str(obj), force="mesh")
     sec = mesh.section(plane_origin=[0, 0, args.grasp_height], plane_normal=[0, 0, 1])
     pts = np.asarray(sec.vertices)
     r = float(np.sqrt(pts[:, 0] ** 2 + pts[:, 1] ** 2).max())
+    r_max = float(np.sqrt(mesh.vertices[:, 0] ** 2 + mesh.vertices[:, 1] ** 2).max())
+    print(f"G1_OBJECT {args.bottle}: height {1000*(mesh.bounds[1][2]-mesh.bounds[0][2]):.0f} mm, radius {1000*r:.1f} mm at grasp height "
+          f"{1000*args.grasp_height:.0f} mm (max {1000*r_max:.1f} mm), mass {mbm.PRESETS[args.bottle]['mass']:.3f} kg", flush=True)
     usd = MeshConverter(MeshConverterCfg(
         asset_path=str(obj), usd_dir=str(pd.USD_CACHE / "bottles"), usd_file_name=f"{args.bottle}.usd",
         force_usd_conversion=False, make_instanceable=False, collision_approximation="convexDecomposition",
@@ -371,7 +380,7 @@ def bottle_asset():
         rigid_props=sim_utils.RigidBodyPropertiesCfg(solver_position_iteration_count=16, solver_velocity_iteration_count=2, max_depenetration_velocity=1.0),
         collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.002, rest_offset=0.0),
     )).usd_path
-    return usd, r, float(mesh.bounds[1][2] - mesh.bounds[0][2]), mbm.PRESETS[args.bottle]["mass"]
+    return usd, r, r_max, float(mesh.bounds[1][2] - mesh.bounds[0][2]), mbm.PRESETS[args.bottle]["mass"]
 
 
 def main():
@@ -390,7 +399,7 @@ def main():
     pelvis_z0 = 0.80 if not args.fixed_base else 1.0
     table_x = args.table_x if not args.fixed_base else args.reach_x
     table_top = args.table_height if args.table_height is not None else pelvis_z0 - 0.02
-    bottle_usd, r_grasp, bottle_h, bottle_mass = bottle_asset()
+    bottle_usd, r_grasp, r_max, bottle_h, bottle_mass = bottle_asset()
     table_cfg = sim_utils.CuboidCfg(
         size=(0.4, 0.9, 0.04), collision_props=sim_utils.CollisionPropertiesCfg(),
         visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.45, 0.38, 0.30)),
@@ -402,8 +411,8 @@ def main():
         leg.func(f"/World/TableLeg{i}", leg, translation=(table_x + dx, dy, (table_top - 0.04) / 2))
     bottle_pos0 = np.array([table_x, args.bottle_y, table_top])
     if args.holder > 0.0:
-        # basket insert: four static walls hugging the bottle body (3 mm clearance), open at the top
-        rb = 0.0364 + 0.003  # 20 oz max radius + clearance
+        # basket insert: four static walls hugging the object body (3 mm clearance), open at the top
+        rb = r_max + 0.003
         wall_t = 0.01
         for k, (dx, dy, sx, sy) in enumerate(((rb + wall_t / 2, 0.0, wall_t, 2 * rb + 2 * wall_t), (-(rb + wall_t / 2), 0.0, wall_t, 2 * rb + 2 * wall_t),
                                              (0.0, rb + wall_t / 2, 2 * rb, wall_t), (0.0, -(rb + wall_t / 2), 2 * rb, wall_t))):
