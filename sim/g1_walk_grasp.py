@@ -6,8 +6,8 @@ Pipeline (Isaac Sim 5.0 / Isaac Lab 2.2, CPU physics):
   2. Unitree's whole-body actuator gains + standing pose; Unitree's simulation-only locomotion policy
      (unitree_sim_isaaclab/assets/model/policy.onnx: 910-d history obs -> 12 leg targets @ 50 Hz).
   3. Walk forward on a velocity command until the bottle is within arm reach, stop, settle.
-  4. Differential IK on the right arm brings the pre-shaped hand next to the bottle (pocket geometry from
-     revo2_hand_grasp.py: bottle surface ~34 mm in front of the knuckle axes, axis 40 mm toward the fingertips).
+  4. Planned joint-space spline on the grasping arm: IK is solved kinematically once per pose, then joints
+     cosine-interpolate (the live DLS servo is what made the raise shimmy). Close uses the real-hand stall recipe.
   5. Close (rigid-linkage finger coupling), lift 10 cm, hold, report.
 
 Phases can be run separately (--phase stand|walk|grasp|all) and the arm/grasp part also works with --fixed-base.
@@ -76,6 +76,10 @@ parser.add_argument("--approach-rise", type=float, default=0.03,
                     help="m: approach the object this much above the grasp height, then settle down onto it before closing "
                          "(keeps the sweeping fingers off the table / can base)")
 parser.add_argument("--arm-time-scale", type=float, default=1.0, help="multiply arm motion durations (slower = less disturbance to the balance policy)")
+parser.add_argument("--arm-vmax", type=float, default=0.45,
+                    help="rad/s cap used to stretch a joint-space arm move so the busiest joint never exceeds this "
+                         "(smoothstep peak is ~1.57 x average). Live IK servo is what made the raise shimmy; free-space "
+                         "moves are now a planned joint spline.")
 parser.add_argument("--collider", choices=["convex_hull", "convex_decomposition"], default="convex_decomposition")
 parser.add_argument("--reconvert", action="store_true")
 parser.add_argument("--merge-fixed", action="store_true", help="merge fixed joints on import (fewer bodies; fingertip/touch links fold into the distal links)")
@@ -83,11 +87,15 @@ parser.add_argument("--snapshot", action="store_true")
 parser.add_argument("--video", action="store_true")
 parser.add_argument("--video-fps", type=int, default=30)
 parser.add_argument("--video-size", type=str, default="1280x720")
+parser.add_argument("--cam", choices=["auto", "wide", "front", "side", "overhead", "overshoulder", "opposite", "palm"],
+                    default="auto",
+                    help="video/snapshot viewpoint. 'auto' = wide for stand/walk, close-up on the object for grasp. "
+                         "The named views stay locked on the can through the lift.")
 parser.add_argument("--tag", type=str, default="")
 parser.add_argument("--max-seconds", type=float, default=40.0)
 parser.add_argument("--dt", type=float, default=0.005, help="physics step; control runs at 50 Hz regardless")
 parser.add_argument("--solver-iters", type=int, default=16, help="articulation position solver iterations (velocity = 1/8 of this, min 1)")
-parser.add_argument("--ik-gain", type=float, default=0.3, help="fraction of the IK Newton step applied to the commanded target per 50 Hz tick")
+parser.add_argument("--ik-gain", type=float, default=0.3, help="unused for free-space (joint spline); kept for --phase ikcheck")
 parser.add_argument("--arm-kp-scale", type=float, default=1.0, help="multiply the grasping arm's PD stiffness/damping from the approach on (diagnostic for arm compliance)")
 parser.add_argument("--arm-gains", choices=["grasp", "teleop", "arm_sdk", "sim"], default="grasp",
                     help="PD gains on the grasping arm once it leaves the standing pose (raise phase on), all sent over rt/arm_sdk on the real "
@@ -526,11 +534,69 @@ def main():
             jac[:, 3:, :] = torch.bmm(Rb, jac[:, 3:, :])
         return jac
 
-    def palm_target_to_hand_pose(palm_pos_b, R_hand_b):
-        """Given desired palm-centre position (pelvis frame) and hand-base rotation, return hand base pos/quat."""
-        pos = palm_pos_b - R_hand_b @ palm_h
-        quat = quat_from_matrix(R_hand_b[None])[0]
-        return pos, quat
+    def ik_solve_to_palm(palm_pos, quat_des, iters=250):
+        """Kinematic IK only: walk the arm joints in PhysX FK (no physics step) then restore. Returns (q_arm, pos_err, rot_err, iters)."""
+        q_saved = robot.data.joint_pos.clone()
+        qd_saved = robot.data.joint_vel.clone()
+        q = q_saved.clone()
+        lim = robot.data.soft_joint_pos_limits[0, arm_ids_t]
+        ep = er = float("inf")
+        n = 0
+        R_des = matrix_from_quat(quat_des[None])[0]
+        pos_des = palm_pos - R_des @ palm_h
+        try:
+            for n in range(1, iters + 1):
+                robot.write_joint_state_to_sim(q, torch.zeros_like(q))
+                robot.write_data_to_sim()
+                sim.forward()
+                robot.update(dt)
+                p_hb, q_hb = hand_pose_b()
+                palm = p_hb[0] + matrix_from_quat(q_hb)[0] @ palm_h
+                ep = float(torch.linalg.norm(palm_pos - palm))
+                er = float(quat_error_magnitude(quat_des[None], q_hb)[0])
+                if ep < 0.002 and er < 0.03:
+                    break
+                ik.set_command(torch.cat([pos_des, quat_des])[None])
+                q_arm = q[0:1, arm_ids_t]
+                q_des = ik.compute(p_hb, q_hb, jacobian_b(), q_arm)
+                dq = torch.clip(q_des - q_arm, -0.08, 0.08)
+                q[0, arm_ids_t] = torch.minimum(torch.maximum(q_arm[0] + dq[0], lim[:, 0] + 0.02), lim[:, 1] - 0.02)
+        finally:
+            robot.write_joint_state_to_sim(q_saved, qd_saved)
+            robot.write_data_to_sim()
+            sim.forward()
+            robot.update(dt)
+        return q[0, arm_ids_t].clone(), ep, er, n
+
+    arm_spline = {"q0": None, "q1": None, "active": False, "t0": 0.0}
+
+    def begin_arm_move(palm_pos, quat, T, label):
+        """Plan a joint-space cosine spline to a palm pose. IK runs once; the 50 Hz loop never servos."""
+        nonlocal move_T
+        q0 = targets[0, arm_ids_t].clone()
+        q1, ep, er, n = ik_solve_to_palm(palm_pos, quat)
+        dq_max = float((q1 - q0).abs().max())
+        T_eff = max(float(T), 1.57 * dq_max / (0.8 * max(args.arm_vmax, 0.05)))
+        arm_spline["q0"], arm_spline["q1"], arm_spline["active"], arm_spline["t0"] = q0, q1, True, t
+        move_T = T_eff
+        print(f"G1_ARM_SPLINE {label}: {n} IK iters, rest {ep*1000:.1f} mm / {math.degrees(er):.1f} deg, "
+              f"dq_max {dq_max:.2f} rad, T={T_eff:.1f}s (vmax {args.arm_vmax:.2f})", flush=True)
+
+    def tick_arm_spline():
+        if not arm_spline["active"]:
+            return
+        a = min(1.0, (t - arm_spline["t0"]) / max(move_T, 1e-3))
+        a = 0.5 - 0.5 * math.cos(math.pi * a)
+        targets[0, arm_ids_t] = arm_spline["q0"] + a * (arm_spline["q1"] - arm_spline["q0"])
+        if loco:
+            loco.arm_targets = targets[0, loco.arm_ids].clone()
+        if step % (decim * 25) == 0:
+            p_hb, q_hb = hand_pose_b()
+            palm = p_hb[0] + matrix_from_quat(q_hb)[0] @ palm_h
+            q_meas = robot.data.joint_pos[0, arm_ids_t]
+            lag = float((targets[0, arm_ids_t] - q_meas).abs().max())
+            print(f"  t={t:5.2f}s {phase:9s} spline a={a:.2f} |q_cmd-q_meas|max={lag:.3f} rad "
+                  f"palm={np.round(palm.cpu().numpy(), 3).tolist()}", flush=True)
 
     R_hand_des = torch.tensor(R_des_np, device=sim.device, dtype=torch.float32)
 
@@ -670,16 +736,34 @@ def main():
         Image.fromarray(np.ascontiguousarray(rgb)).save(p)
         print(f"G1_SNAPSHOT {label}: {p}", flush=True)
 
-    def place_camera(mode):
+    def place_camera(mode=None):
         if camera is None:
             return
         pel = robot.data.root_pos_w[0].cpu().numpy()
-        if mode == "wide":
-            eye = pel + np.array([2.2, -2.4, 1.0])
+        can = bottle.data.root_pos_w[0].cpu().numpy()
+        view = args.cam if args.cam != "auto" else (mode or "wide")
+        # named views lock onto the can so the lift stays in frame; offsets are world-frame metres
+        if view == "wide":
             look = pel + np.array([0.6, 0.0, -0.1])
-        else:  # close-up on the bottle from the robot's right-front
-            look = bottle.data.root_pos_w[0].cpu().numpy() + np.array([0.0, 0.0, 0.12])
-            eye = look + np.array([0.55, -0.75, 0.45])
+            eye = pel + np.array([2.2, -2.4, 1.0])
+        elif view == "front":
+            look = can + np.array([0.0, 0.0, 0.08])
+            eye = can + np.array([0.95, 0.05, 0.32])
+        elif view == "side":
+            look = can + np.array([0.0, 0.0, 0.06])
+            eye = can + np.array([0.08, -0.78, 0.16])
+        elif view == "overhead":
+            look = can + np.array([0.0, 0.0, 0.04])
+            eye = can + np.array([0.18, -0.12, 0.95])
+        elif view == "overshoulder":
+            look = can + np.array([0.0, 0.0, 0.05])
+            eye = can + np.array([-0.55, -0.62, 0.42])
+        elif view == "opposite":
+            look = can + np.array([0.0, 0.0, 0.06])
+            eye = can + np.array([0.22, 0.88, 0.26])
+        else:  # palm: tight 3/4 on the working hand
+            look = can + np.array([0.0, 0.0, 0.05])
+            eye = can + np.array([0.38, -0.52, 0.20])
         camera.set_world_poses_from_view(torch.tensor([eye.tolist()], device=sim.device, dtype=torch.float32),
                                          torch.tensor([look.tolist()], device=sim.device, dtype=torch.float32))
 
@@ -871,7 +955,7 @@ def main():
                     result["stop_distance_m"] = dist
                     if args.phase == "walk":
                         break
-                    place_camera("close")
+                    place_camera("palm" if args.cam == "auto" else None)
                     if not (args.finger_mode == "stall" and args.oppose_at_close):
                         set_hand(q_hand_pre, 0.5)  # thumb into opposition before the approach (bench protocol)
                     palm_start = hand_pose_b()[0][0] + torch.tensor([0.0, 0.0, 0.0], device=sim.device)
@@ -905,6 +989,7 @@ def main():
                         robot.write_joint_damping_to_sim(kd, joint_ids=arm_ids)
                         print(f"G1_ARM_GAINS {args.arm_gains}: kp={kp_l} kd={kd_l} on {side} arm {SIDE_ARM}", flush=True)
                     log_phase("raise")
+                    begin_arm_move(palm_goal, quat_des_final, move_T, "raise")
             elif phase == "raise":
                 if t - phase_t0 > move_T + 0.5:
                     # 2) out to the pre-grasp pose beside the bottle (8 cm off the palm normal), above table height
@@ -912,6 +997,7 @@ def main():
                     palm_goal = grasp_palm_target_b(gap=args.gap + 0.08)
                     move_T = 2.0 * args.arm_time_scale
                     log_phase("pregrasp")
+                    begin_arm_move(palm_goal, quat_des_final, move_T, "pregrasp")
             elif phase == "pregrasp":
                 if t - phase_t0 > move_T + 0.8:
                     palm_start = palm_goal
@@ -924,12 +1010,14 @@ def main():
                         robot.write_joint_damping_to_sim(kd, joint_ids=arm_ids)
                         print(f"G1_ARM_GAINS scaled x{args.arm_kp_scale}: kp={np.round(kp[0].cpu().numpy(),1).tolist()}", flush=True)
                     log_phase("approach")
+                    begin_arm_move(palm_goal, quat_des_final, move_T, "approach")
             elif phase == "approach" and args.approach_rise > 0.0:
                 if t - phase_t0 > move_T + 0.4:
                     palm_start = palm_goal
                     palm_goal = grasp_palm_target_b(gap=args.gap - args.press)  # settle down onto the grasp height
                     move_T = 0.8 * args.arm_time_scale
                     log_phase("descend")
+                    begin_arm_move(palm_goal, quat_des_final, move_T, "descend")
             elif phase in ("approach", "descend"):
                 if t - phase_t0 > move_T + 0.6:
                     if args.finger_mode == "stall":
@@ -960,6 +1048,7 @@ def main():
                     palm_goal = palm_goal + torch.tensor([0.0, -sgn * (args.press + 0.003), args.lift], device=sim.device)
                     move_T = 1.2
                     log_phase("lift")
+                    begin_arm_move(palm_goal, quat_des_final, move_T, "lift")
             elif phase == "lift":
                 if t - phase_t0 > move_T + 3.0:
                     bz = float(bottle.data.root_pos_w[0, 2])
@@ -974,42 +1063,8 @@ def main():
                 if t - phase_t0 > 1.0:
                     break
 
-            # ---------------- arm IK toward the interpolated palm goal ----------------
-            if palm_goal is not None:
-                a = min(1.0, (t - phase_t0) / move_T)
-                a = 0.5 - 0.5 * math.cos(math.pi * a)
-                palm_des = palm_start + a * (palm_goal - palm_start)
-                if quat_start is not None and phase == "raise":
-                    quat_des = quat_slerp(quat_start, quat_des_final, a)
-                else:
-                    quat_des = quat_des_final
-                R_des = matrix_from_quat(quat_des[None])[0]
-                pos_des = palm_des - R_des @ palm_h
-                p_hb, q_hb = hand_pose_b()
-                ik.set_command(torch.cat([pos_des, quat_des])[None])
-                q_arm = robot.data.joint_pos[0:1, arm_ids_t]
-                q_des = ik.compute(p_hb, q_hb, jacobian_b(), q_arm)
-                # integrate the *commanded* target with the IK step (the PD arm sags under gravity, so re-basing on the
-                # measured angles would leave a permanent error); limit per-tick motion and clamp to soft limits
-                dq = torch.clip(IK_GAIN * (q_des - q_arm), -0.05, 0.05)  # fractional Newton step: the PD arm lags the target
-                q_new = targets[0:1, arm_ids_t] + dq
-                q_new = torch.minimum(torch.maximum(q_new, q_arm - 0.35), q_arm + 0.35)  # anti-windup vs. blocked joints
-                lim = robot.data.soft_joint_pos_limits[0, arm_ids_t]
-                q_new = torch.minimum(torch.maximum(q_new, lim[:, 0]), lim[:, 1])
-                targets[0, arm_ids_t] = q_new[0]
-                if loco:
-                    loco.arm_targets = targets[0, loco.arm_ids].clone()
-                err = float(torch.linalg.norm(palm_des - (p_hb[0] + matrix_from_quat(q_hb)[0] @ palm_h)))
-                rot_err = float(quat_error_magnitude(quat_des[None], q_hb)[0])
-                if step % (decim * 25) == 0:
-                    qa_ = q_new[0].cpu().numpy(); lo_ = lim[:, 0].cpu().numpy(); hi_ = lim[:, 1].cpu().numpy()
-                    sat = [SIDE_ARM[k].replace(f"{side}_", "").replace("_joint", "") + ("↑" if qa_[k] >= hi_[k] - 1e-3 else "↓")
-                           for k in range(len(SIDE_ARM)) if qa_[k] >= hi_[k] - 1e-3 or qa_[k] <= lo_[k] + 1e-3]
-                    Rh_ = matrix_from_quat(q_hb)[0]
-                    ex_ = np.round((Rh_ @ torch.tensor([1.0, 0, 0], device=sim.device)).cpu().numpy(), 2)  # hand +x (palm normal)
-                    ez_ = np.round((Rh_ @ torch.tensor([0, 0, 1.0], device=sim.device)).cpu().numpy(), 2)  # hand +z (fingers)
-                    b_ = np.round(bottle_rel_b().cpu().numpy(), 3); pc_ = np.round((p_hb[0] + Rh_ @ palm_h).cpu().numpy(), 3)
-                    print(f"  t={t:5.2f}s {phase:9s} palm err {err*1000:5.1f} mm rot err {math.degrees(rot_err):5.1f} deg | palm_normal(pelvis)={ex_.tolist()} fingers={ez_.tolist()} palm_c={pc_.tolist()} bottle_base={b_.tolist()} limits={sat}", flush=True)
+            # ---------------- arm: planned joint spline (no live IK servo) ----------------
+            tick_arm_spline()
 
             if phase in ("approach", "descend", "close") and step % (decim * 10) == 0:
                 names_ = [f"{side}_index_proximal_link", f"{side}_pinky_proximal_link", f"{side}_index_distal_link", f"{side}_thumb_distal_link"]
@@ -1030,8 +1085,11 @@ def main():
         step += 1
         t = step * dt
         if rec is not None and step % capture_every == 0:
-            if phase in ("stand", "walk"):
-                place_camera("wide")
+            if args.cam == "auto":
+                if phase in ("stand", "walk"):
+                    place_camera("wide")
+            else:
+                place_camera()  # keep the named view locked on the can through the lift
             rec(f"G1 + Revo 2 {side} | {args.bottle} | t={t:5.2f}s {phase} | cmd vx={command[0]:.2f}")
         if step % (decim * 50) == 0 and phase in ("stand", "walk"):
             pel = robot.data.root_pos_w[0]

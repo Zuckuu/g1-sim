@@ -27,7 +27,8 @@ scp robot/g1_snapshot.py g1:/tmp/ && ssh g1 "$PY /tmp/g1_snapshot.py --group bod
 | Motor temps | 31–43 °C at rest (motors had been powered) |
 | Right hand | **BrainCo Revo 2, serial `BCXTR2265J2500018`** (XT = Touch variant), hardware_type 6, sku_type 1, firmware **1.0.9.U**, Modbus slave 127 on `/dev/ttyUSB1` @ 460800 |
 | Left hand | **BrainCo Revo 2, serial `BCXTL2265J2500018`** (Touch left, sku MEDIUM_LEFT), firmware 1.0.9.U, Modbus slave 126 on `/dev/ttyUSB2` @ 460800. Was **not detected at boot**: the service scans each port once, the left hand had not answered Modbus yet (green LED = 24 V only), and there is no retry. `sudo systemctl restart brainco_hand.service` found both hands in 0.5 s; `rt/brainco/left/state` now live at ~65 Hz. |
-| USB-485 | FTDI FT4232H quad UART (ttyUSB0–3), Realtek hubs. No Intel RealSense on the bus → no head camera visible. `lidar_driver` stopped, no `rt/utlidar/*` topics. |
+| USB-485 | FTDI FT4232H quad UART (ttyUSB0–3), Realtek hubs. USB Wi-Fi (`0bda:a85b`). **No camera on the bus.** |
+| Cameras (2026-09-10 23:28) | **No feed, nothing to capture.** `/dev/video*` empty; `rs-enumerate-devices` "No device detected"; CSI Argus "No cameras available"; DDS `rt/frontvideostream` silent (0 msgs / 2 s). Unitree `videohub_pc4` is running and *would* publish H.264 from `/dev/video4` @ 1920×1080 if that node existed. A dashboard already waiting on `:8080` (`/tmp/g1-vision-stream.py`, started from 192.168.1.242) reports the same: `{"device": false, "source": "none"}`. Motion PC `.161` pings, no camera TCP ports. Probe: `robot/g1_camera_probe.py` → `docs/robot/snapshot-2026-09-10-camera.json`. |
 
 ## What is running on the robot (services, `robot_state.ServiceList`)
 
@@ -225,6 +226,30 @@ window is about −5 mm (deeper) to +13 mm (short), i.e. the arm must hit the de
 covers the rest: if the pinky/ring run past ~0.45 without stopping, the palm was short — open, step 10 mm deeper,
 close again.
 
+## Live arm + can test (no walking)
+
+**Checkpoint 2026-09-14:** two consecutive left-arm cycles on the standing G1 (FSM id 802, AI standing) found the 12 oz Pepsi from the head D435i, placed the palm, grasped (contact map matched the bench fingerprint), lifted ~14 cm, held 5 s, lowered, released, and retraced home. Cycle 1 needed a 2.5 cm `--palm-x-trim` (fingers an inch too far forward) and was one press too deep into the can; cycle 2 with `--press 0` / `--press-lead 0.012` and that trim as default did not knock the can. Neither cycle walks. Default arm is **left**; right needs `--allow-right`. Keep L2+B in hand.
+
+Tool: `robot/g1_arm_can_test.py`. Copy to `/tmp` on the Jetson (`~/miniforge3/envs/g1brainco/bin/python`). After a reboot also copy and start `robot/g1_vision_stream.py --port 8080` (aligned RGB-D on `:8080`; LOOK reads it). If `left hand: 0 Hz`, `sudo systemctl restart brainco_hand.service`.
+
+```bash
+PY=~/miniforge3/envs/g1brainco/bin/python
+scp -o IPQoS=none robot/g1_arm_can_test.py robot/g1_vision_stream.py robot/revo2_hand_test.py g1-wifi:/tmp/
+# vision stream (once per boot):
+ssh g1-wifi "cd /tmp && setsid nohup $PY /tmp/g1_vision_stream.py --port 8080 > /tmp/vision.log 2>&1 < /dev/null &"
+# full cycle (LOOK fills can x/y/z and table front):
+ssh -t g1-wifi "$PY /tmp/g1_arm_can_test.py --stage all --look --until lift --time-scale 1.8 --vmax 0.25"
+# laptop-only planner (no robot): --offline --stage dryrun --urdf <g1_29dof_rev_1_0.urdf> --can-x … --table-x …
+```
+
+`--until lift` is the proven path. `--until descend --no-hand` is the placement-only rehearsal. `--stage recover --resume-plan <json>` retraces a stranded run (takeover at weight 1, no 0→1 ramp). `--stage check` / `fsm` / `step` still send no / one-joint motion.
+
+The dryrun **is** the live plan: every waypoint's joints are stored and replayed (live re-solve once folded the arm into the chest). Interpolants are checked against the LOOK table slab and a mesh-derived torso/head/hips box model. The standing controller's waist is held upright (kp 120 + bounded integral); a second bounded integral on the arm joints cancels gravity sag (~4 cm at the palm at kp 120). Cross-midline reaches use the elbow-swivel null space so the upper arm stays off the chest.
+
+Left-hand workspace on this counter (table ~0.95 m, edge x≈0.32): can within ~0.50 m and not more than ~2 cm to the robot's **right**. A can at (0.516, −0.036) is refused without moving; the same can at (0.442, −0.002) grasped. Right-of-centre cans need the right arm (not yet run live).
+
+`--stage step` **refuses** to publish while FSM id is 0 / kp is 0. First check on an earlier boot (2026-09-11 01:10): FSM id 0 ZeroTorque; camera later: D435i on the Jetson USB bus, stream on `http://127.0.0.1:8080`.
+
 ## Safe next steps on the real robot (in order)
 
 1. **Measure the adapter** (calipers): wrist flange face → Revo 2 base flange; also confirm fingers-along-forearm,
@@ -233,10 +258,7 @@ close again.
    if only one hand publishes, `sudo systemctl restart brainco_hand.service`. (A retry loop or `ExecStartPre=sleep 10`
    in the unit would remove the manual step.) `robot/probe_hands.cpp` is the read-only per-port / per-slave-ID probe
    that found it.
-3. **Right hand open/close cycles** (hand only, robot stays zero-torque on the stand): publish `rt/brainco/right/cmd`
-   with speed 1.0, log `rt/brainco/right/state` → real close time, per-finger stall current on nothing and on the
-   20 oz bottle held into the palm by hand. That calibrates `--finger-effort` and the stall angle in the sim.
-4. Operator: remote on → damping (L2+B) → stand; re-run `g1_snapshot.py --group cmd` → real standing pose and the
-   controller's leg/waist/arm kp/kd, which replace the guessed sim gains.
-5. Before any `rt/arm_sdk` use: `RobotStateClient.ServiceSwitch("g1_arm_example", 0)` (or BrainCo's launch does it),
-   start from the measured pose, ramp weight 0→1 over ≥2 s, cap 0.5 rad/s, e-stop in hand.
+3. **FSM watch then a one-joint step** (`g1_arm_can_test.py --stage fsm`, then `--stage step`) before any raise/grasp.
+   Operator: remote on → L2+B (damping) → L2+UP (locked standing) → R1+X (main control). Confirm each id in `fsm`.
+4. Before any `rt/arm_sdk` use: `RobotStateClient.ServiceSwitch("g1_arm_example", 0)` (or `--stop-arm-example`),
+   start from the measured pose, ramp weight 0→1 over ≥2 s, cap 0.35 rad/s, e-stop in hand.
