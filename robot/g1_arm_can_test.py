@@ -4,7 +4,7 @@
 The arm is driven over Unitree's `rt/arm_sdk` (the motion controller keeps the legs; the blend weight in
 motor_cmd[29].q is ramped 0 -> 1 while we command the measured pose, so nothing jumps). The palm target geometry is
 the one that held the can in the simulator (docs/robot/README.md, "Placement rule"): palm face 3 mm off the can,
-palm centre 55 mm above the can base, can axis 15 mm toward the fingertips from the knuckle line, arrive 3 cm high
+palm centre 45 mm above the can base (live wrap; fingers on the body, not the rim), can axis 15 mm toward the fingertips from the knuckle line, arrive 3 cm high
 and descend, thumb up until the palm is at the can, then oppose + ramp-close with contact freeze (the bench recipe,
 run through robot/revo2_hand_test.py), then lift.
 
@@ -104,7 +104,7 @@ SOLE_PTS = [[-0.05, 0.025, -0.03], [-0.05, -0.025, -0.03], [0.12, 0.03, -0.03], 
 SOLE_R = 0.005
 CAN_R, CAN_H = 0.0331, 0.1224   # 12 oz can (assets/bottles/pepsi-12oz-can.json)
 FINGERS = ["thumb", "thumb_aux", "index", "middle", "ring", "pinky"]
-FINGERPRINT = {"thumb": 0.20, "index": 0.21, "middle": 0.28, "ring": 0.26, "pinky": 0.20}  # can against the palm
+FINGERPRINT = {"thumb": 0.21, "index": 0.20, "middle": 0.28, "ring": 0.25, "pinky": 0.22}  # live wrap on the can body
 STAGES_ALL = ["raise", "pregrasp", "approach", "descend", "grasp", "lift", "lower", "release", "retreat", "park"]
 
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -133,7 +133,7 @@ parser.add_argument("--press", type=float, default=0.0, help="approach this far 
 parser.add_argument("--distal-offset", type=float, default=0.015, help="can axis this far toward the fingertips from the knuckle line (m)")
 parser.add_argument("--palm-x-trim", type=float, default=-0.025, help="calibration: shift every palm target along level x (m); -0.025 = the hand was an inch too far forward at the can")
 parser.add_argument("--palm-y-trim", type=float, default=0.0, help="calibration: shift every palm target along level y (m); for the left hand +0.01 stops 1 cm further from the can")
-parser.add_argument("--grasp-height", type=float, default=0.055, help="palm centre above the can base (m)")
+parser.add_argument("--grasp-height", type=float, default=0.045, help="palm centre above the can base (m); 0.045 wraps the body, 0.055 caught the rim")
 parser.add_argument("--approach-rise", type=float, default=0.03)
 parser.add_argument("--lift", type=float, default=0.14)
 parser.add_argument("--pregrasp-gap", type=float, default=0.08, help="pre-grasp standoff added to --gap (m)")
@@ -388,6 +388,9 @@ def reach_arm_guesses(q_body):
         (-0.90, 0.20, -0.50, 0.50, -0.30, 0.20, 0.50),
         (0.20, 0.30, 0.00, 0.80, 0.00, 0.00, 0.00),
         (-0.45, 0.75, -0.55, -0.55, -0.85, 0.45, 0.90),
+        # elbow-out / abducted: left arm across the midline (live approach that cleared the chest)
+        (-0.73, 0.35, -0.67, -0.36, -0.71, 0.83, 1.14),
+        (-0.95, 0.65, -0.45, 0.05, -0.55, 0.50, 0.70),
     ]
     out = []
     flip = 1.0 if SIDE == "left" else -1.0
@@ -414,20 +417,37 @@ def ik_seeds_from(q_now):
     return [np.asarray(q_now, dtype=float).copy()] + reach_arm_guesses(q_now)
 
 
-def ik_near(seeds, p_goal, R_goal, q_attract, max_ep=0.025, iters=200, q_bias=None):
+def shoulder_abduction(q_arm):
+    """Positive = working shoulder rolled away from the torso."""
+    return -SGN * float(np.asarray(q_arm, dtype=float)[1])
+
+
+def can_on_far_side():
+    """Can is on the other arm's side of the midline (left arm to -y, right arm to +y)."""
+    if CAN.get("y") is None:
+        return False
+    return (SGN * float(CAN["y"])) > 0.0
+
+
+def ik_near(seeds, p_goal, R_goal, q_attract, max_ep=0.025, iters=200, q_bias=None, k_ns=0.4, min_abduction=0.0):
     """Among IK solutions that hit the palm, pick the one closest in joint space to q_attract.
-    Stops DLS from switching back to the overhead homotopy on a via that is still near the hip."""
+    Stops DLS from switching back to the overhead homotopy on a via that is still near the hip.
+    min_abduction: among accurate hits, prefer an abducted shoulder (across-midline). Accuracy still wins."""
     qa = np.asarray(q_attract, dtype=float)[ARM]
     best = None
     fallback = None
     for qs in seeds:
-        q, ep, er = KIN.ik(np.asarray(qs, dtype=float).copy(), p_goal, R_goal, iters=iters, q_bias=q_bias)
+        q, ep, er = KIN.ik(np.asarray(qs, dtype=float).copy(), p_goal, R_goal, iters=iters, q_bias=q_bias, k_ns=k_ns)
         dq = float(np.max(np.abs(q[ARM] - qa)))
         if fallback is None or ep < fallback[1]:
             fallback = (q, ep, er, dq)
         if ep <= max_ep and er < 0.18:
-            if best is None or dq < best[3]:
-                best = (q, ep, er, dq)
+            hug = 0.0
+            if min_abduction > 0.0 and shoulder_abduction(q[ARM]) < min_abduction:
+                hug = min_abduction - shoulder_abduction(q[ARM])
+            cost = (20.0 * ep + hug + 0.1 * dq) if min_abduction > 0.0 else dq
+            if best is None or cost < best[3]:
+                best = (q, ep, er, cost)
     pick = best if best is not None else fallback
     return pick[0], pick[1], pick[2]
 
@@ -481,7 +501,8 @@ BODY_BOXES = [  # (name, x_min, x_max, |y|_max, z_min, z_max)
     ("hips", -0.08, 0.10, 0.165, -0.48, -0.07),
     ("pelvis", -0.05, 0.05, 0.064, -0.15, 0.035),
 ]
-# upper arm mesh: 0.040 fore/aft, 0.033 inboard (shoulder_roll_link STL y -0.033..0.040); elbow link 0.033.
+# Sphere radii on the arm centreline. Upper-arm 35 mm matches the mesh; a 6 mm slack on that sphere
+# only is for wraps past midline that graze the front chest corner in the proxy (live: 1-5 mm).
 ARM_R = {"upper arm": 0.035, "elbow": 0.034, "forearm": 0.03, "wrist": 0.03, "palm": 0.025, "fingertips": 0.02,
          "palm face": 0.015, "hand back": 0.015}
 
@@ -505,9 +526,12 @@ def _arm_points_L(sr, el, wr, pp, R, R_pL):
 def _body_violation(sr, el, wr, pp, R, R_pL):
     for name, p in _arm_points_L(sr, el, wr, pp, R, R_pL):
         r = ARM_R[name]
+        # 6 mm slack on the upper-arm sphere: a wrap past midline grazes the front-left chest
+        # corner in this proxy (1-5 mm) while the real tube misses it. Still refuses a hang-fold into the ribs.
+        slack = 0.006 if name == "upper arm" else 0.0
         for b in BODY_BOXES:
             d = _box_dist(p, b)
-            if d < r:
+            if d + slack < r:
                 return "%s %.0f mm into the %s (level %s)" % (name, (r - d) * 1000, b[0], np.round(p, 3).tolist())
     return None
 
@@ -672,6 +696,7 @@ LOCK = threading.Lock()
 STATE = {"q": None, "dq": None, "tau": None, "rpy": None, "mode_machine": None, "t": None, "n": 0}
 LOWCMD = {"kp": None, "kd": None, "n": 0, "t": None, "skip": 0}
 HAND = {"q": None, "t": None, "n": 0}
+HAND_LAST_RC = 0
 FOREIGN = []
 ROWS = []          # 50 Hz: [t, q_meas(7), q_cmd(7), tau(7), palm_meas(3), palm_des(3), err_mm, rot_err_deg, weight]
 SUMMARY = {"stages": {}}
@@ -1172,7 +1197,10 @@ def palm_target(gap, dz=0.0):
 
 def stage_goals():
     g = {}
-    g["pregrasp"] = palm_target(args.gap + args.pregrasp_gap)
+    # Pregrasp stays at least 55 mm up so the via interpolant clears the 4 cm table floor.
+    # Descend/lift/lower use --grasp-height (default 45 mm = wrap on the can body).
+    pre_z = max(float(args.grasp_height), 0.055)
+    g["pregrasp"] = palm_target(args.gap + args.pregrasp_gap, dz=pre_z - float(args.grasp_height))
     g["approach"] = palm_target(args.gap - args.press, args.approach_rise)
     g["descend"] = palm_target(args.gap - args.press)
     g["lift"] = palm_target(args.gap - args.press) + np.array([0.0, -SGN * (args.press + 0.003), args.lift])
@@ -1304,6 +1332,8 @@ def prompt_loop(text):
 
 def run_hand(stage, extra):
     """run revo2_hand_test.py for one hand stage; returns its JSON doc (or None)."""
+    global HAND_LAST_RC
+    HAND_LAST_RC = 0
     if args.no_hand:
         log("HAND %s skipped (--no-hand)" % stage)
         return None
@@ -1312,13 +1342,40 @@ def run_hand(stage, extra):
     if SIDE == "right":
         cmd.append("--allow-right")
     log("HAND %s: %s" % (stage, " ".join(cmd[1:])))
-    rc = subprocess.call(cmd)
-    log("HAND %s exit %d" % (stage, rc))
+    HAND_LAST_RC = subprocess.call(cmd)
+    log("HAND %s exit %d" % (stage, HAND_LAST_RC))
     try:
         with open(out) as f:
             return json.load(f)
     except Exception:  # noqa: BLE001
         return None
+
+
+def hand_q_now():
+    with LOCK:
+        q = HAND["q"]
+    return None if q is None else [float(v) for v in q]
+
+
+def hand_is_open(q=None):
+    """Closers (not thumb_aux) near 0. Opposed-and-open is thumb_aux=1 with the fingers out."""
+    q = hand_q_now() if q is None else q
+    if q is None:
+        return True
+    closers = [q[0], q[2], q[3], q[4], q[5]]
+    return max(closers) <= 0.15 and q[1] <= 0.20
+
+
+def ensure_hand_open(why):
+    """Revo holds its last command across processes. Open at cycle start so oppose/close are not refused."""
+    if args.no_hand:
+        return True
+    q = hand_q_now()
+    if q is not None and not hand_is_open(q):
+        log("HAND not open (q %s) - releasing before %s" % ([round(v, 2) for v in q], why))
+        run_hand("release", [])
+    q = hand_q_now()
+    return q is None or hand_is_open(q)
 
 
 def grasp_verdict(doc):
@@ -2254,16 +2311,19 @@ def do_dryrun(info):
             # Null-space bias toward shoulder abduction: reaching across to a midline can otherwise drags the upper
             # arm along the chest (the body model flagged approach/descend by 1-13 mm).
             attract = q_prev if is_reaching_arm(q_prev[ARM]) else q_pg
-            q, ep, er = ik_near(ik_seeds_from(q_prev) + reach_arm_guesses(q_prev) + [q_pg], goal, R_des, attract)
-            for roll_bias in (0.45, 0.7, 0.95):
+            seeds = ik_seeds_from(q_prev) + reach_arm_guesses(q_prev) + [q_pg]
+            far = can_on_far_side() or (CAN.get("y") is not None and abs(float(CAN["y"])) < 0.05)
+            min_abd = 0.20 if far else 0.12
+            q, ep, er = ik_near(seeds, goal, R_des, attract, min_abduction=min_abd)
+            for roll_bias in (0.35, 0.55, 0.75, 0.95, 1.15):
                 ok_b, _ = body_clear(q, R_pL)
                 ok_pb, _ = path_check(q_prev[ARM], q[ARM], q_prev, R_pL, table=name not in ("approach", "descend", "lower"))
-                if ok_b and ok_pb and -SGN * float(q[ARM][1]) >= 0.15:
+                if ok_b and ok_pb and shoulder_abduction(q[ARM]) >= min_abd:
                     break
                 q_bias = np.asarray(attract, dtype=float)[ARM].copy()
                 q_bias[1] = -SGN * roll_bias
-                q_b, ep_b, er_b = ik_near(ik_seeds_from(q_prev) + [q, q_pg], goal, R_des, attract, q_bias=q_bias)
-                if ep_b < 0.01 and er_b < 0.12:
+                q_b, ep_b, er_b = ik_near(seeds + [q], goal, R_des, attract, q_bias=q_bias, k_ns=0.85, min_abduction=min_abd)
+                if ep_b < 0.01 and er_b < 0.12 and ep_b <= ep + 0.003:
                     q, ep, er = q_b, ep_b, er_b
         dq = q[ARM] - q_prev[ARM]
         ok_path, why = path_check(q_prev[ARM], q[ARM], q_prev, R_pL, table=name not in ("approach", "descend", "lower"))
@@ -2769,16 +2829,29 @@ def stage_grasp():
     if args.no_hand:
         log("GRASP skipped (--no-hand)")
         return True
-    doc_o = run_hand("oppose", ["--aux-target", "%.2f" % args.aux_target, "--aux-seconds", "1.2"])
+    ensure_hand_open("grasp")
+    oppose_extra = ["--aux-target", "%.2f" % args.aux_target, "--aux-seconds", "1.2"]
+    close_extra = ["--ramp-rate", "%.2f" % args.ramp_rate, "--speed", "1.0", "--stall-threshold", "%.2f" % args.stall_threshold,
+                    "--squeeze", "%.2f" % args.squeeze, "--hold", "0", "--keep", "--aux-target", "%.2f" % args.aux_target]
+    doc_o = run_hand("oppose", oppose_extra)
+    if HAND_LAST_RC != 0:
+        log("HAND oppose refused - releasing and retrying once")
+        ensure_hand_open("oppose retry")
+        doc_o = run_hand("oppose", oppose_extra)
     time.sleep(0.3)
-    doc_c = run_hand("close", ["--ramp-rate", "%.2f" % args.ramp_rate, "--speed", "1.0", "--stall-threshold", "%.2f" % args.stall_threshold,
-                               "--squeeze", "%.2f" % args.squeeze, "--hold", "0", "--keep", "--aux-target", "%.2f" % args.aux_target])
+    doc_c = run_hand("close", close_extra)
+    if HAND_LAST_RC != 0:
+        log("HAND close refused - releasing and retrying once")
+        ensure_hand_open("close retry")
+        doc_o = run_hand("oppose", oppose_extra)
+        time.sleep(0.3)
+        doc_c = run_hand("close", close_extra)
     verdict, ok = grasp_verdict(doc_c)
     SUMMARY["grasp"] = dict(verdict=verdict, ok=ok, oppose_out=None if doc_o is None else doc_o.get("args", {}).get("out"),
                             close_summary=None if doc_c is None else doc_c.get("summary"))
     log("GRASP contact map: %s" % verdict)
     grab_still("grasp")
-    return ok
+    return ok and HAND_LAST_RC == 0
 
 
 def stage_release_hand():
@@ -2800,6 +2873,7 @@ def run_all(info):
     T = {"raise": 3.0, "pregrasp": 3.0, "approach": 2.5, "descend": 1.5, "lift": 2.0, "lower": 2.0, "retreat": 2.0}
     reached = []      # stages completed, for the reverse-out
     grasped = False
+    ensure_hand_open("cycle start")
     for k, name in enumerate(order):
         if k > stop_idx:
             break

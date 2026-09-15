@@ -7,11 +7,11 @@ SetVelocity too: vx forward, vy left, vyaw counter-clockwise).
 
 Workspace policy (offline planner map, robot/g1_arm_can_test.py --offline over a grid, 2026-09-14, table 0.16 m
 above the pelvis):
-  * each arm reaches cans on ITS side of the midline down to ~2.5 cm across it (live: left arm y=-0.006 grasped,
-    y=-0.025 refused) and out to at least 0.25 m on its own side;
+  * each arm reaches cans on ITS side of the midline and ~8 cm across it (left arm y=-0.029 is a planner
+    chest-hug unless the elbow swivels out; the arm itself can wrap past midline);
   * depth past the table edge: 0.08..0.22 m with the edge 0.30 m ahead, up to 0.26 m with the edge at 0.26 m,
     only to 0.20 m with the edge at 0.34 m. Absolute limit: can ~0.52-0.54 m from the pelvis;
-  * so: arm = left if can_y >= 0 else right; walk only if the can is outside the arm's band with margin; the walk puts
+  * so: arm = left if can_y >= -0.08 else right; walk only if the can is outside the arm's band with margin; the walk puts
     the table edge at clamp(0.44 - depth, 0.26, 0.34) and the can at y = +/-0.07 on the arm's side.
 
 Stages (each one is the live test of the next building block; nothing walks without --allow-walk):
@@ -36,7 +36,7 @@ parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.R
 parser.add_argument("--stage", default="policy", choices=["check", "policy", "lidar", "walk-handshake", "walk-test", "reposition", "fetch"])
 parser.add_argument("--iface", default="eth0")
 parser.add_argument("--domain", type=int, default=0)
-parser.add_argument("--arm", default="auto", choices=["auto", "left", "right"], help="auto: left if the can is left of the midline, else right")
+parser.add_argument("--arm", default="auto", choices=["auto", "left", "right"], help="auto: left if the can is left of midline or within 8 cm to the right, else right")
 parser.add_argument("--allow-right", action="store_true", help="the policy may pick the right arm (else it uses the left and walks)")
 parser.add_argument("--allow-walk", action="store_true", help="required for any SetVelocity (walk-handshake/walk-test/reposition/fetch)")
 parser.add_argument("--dry", action="store_true", help="print every loco command instead of sending it")
@@ -47,7 +47,7 @@ parser.add_argument("--x-target", type=float, default=0.44, help="m: preferred c
 parser.add_argument("--edge-min", type=float, default=0.26, help="m: never put the table edge closer than this")
 parser.add_argument("--edge-max", type=float, default=0.34)
 parser.add_argument("--depth-max", type=float, default=0.26, help="m: cans deeper than this past the edge are unreachable (no leaning)")
-parser.add_argument("--band-y-min", type=float, default=0.0, help="m: can y on the arm's side must be >= this for 'no walk needed'")
+parser.add_argument("--band-y-min", type=float, default=-0.08, help="m: can y on the arm's side must be >= this for 'no walk needed' (negative = that many metres across midline)")
 parser.add_argument("--band-y-max", type=float, default=0.22)
 parser.add_argument("--band-depth", default="0.08,0.20", help="m: depth past the edge accepted without walking")
 parser.add_argument("--band-edge", default="0.25,0.36", help="m: table edge distance accepted without walking")
@@ -322,14 +322,19 @@ def look(tag):
 # ----------------------------------------------------------------------------------------------------------------------
 # policy
 # ----------------------------------------------------------------------------------------------------------------------
+LEFT_CROSS_Y = 0.08  # left arm takes cans this far to the robot's right of midline; beyond that, right arm
+
+
 def choose_arm(can_y):
-    """left if the can is left of the midline (or on it), else right - unless the right arm is not allowed."""
+    """Left for its side plus LEFT_CROSS_Y across midline; else right (or left + walk if right is not allowed)."""
     if args.arm != "auto":
         return args.arm, "forced by --arm"
-    want = "left" if can_y >= 0.0 else "right"
-    if want == "right" and not args.allow_right:
-        return "left", "can is %.0f mm to the robot's right -> right arm preferred, but --allow-right not given: left arm + walk" % (-can_y * 1000)
-    return want, "can y=%+.3f -> %s arm" % (can_y, want)
+    if can_y >= -LEFT_CROSS_Y:
+        return "left", "can y=%+.3f is in the left-arm band (to %.0f mm across midline)" % (can_y, LEFT_CROSS_Y * 1000)
+    if not args.allow_right:
+        return "left", "can is %.0f mm to the robot's right (past left-arm %.0f mm band), but --allow-right not given: left arm + walk" % (
+            -can_y * 1000, LEFT_CROSS_Y * 1000)
+    return "right", "can y=%+.3f is past the left-arm midline band -> right arm" % can_y
 
 
 def plan_walk(lk, arm):
