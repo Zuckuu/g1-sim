@@ -238,11 +238,13 @@ scp -o IPQoS=none robot/g1_arm_can_test.py robot/g1_vision_stream.py robot/revo2
 # vision stream (once per boot):
 ssh g1-wifi "cd /tmp && setsid nohup $PY /tmp/g1_vision_stream.py --port 8080 > /tmp/vision.log 2>&1 < /dev/null &"
 # full cycle (LOOK fills can x/y/z and table front):
-ssh -t g1-wifi "$PY /tmp/g1_arm_can_test.py --stage all --look --until lift --time-scale 1.8 --vmax 0.25"
+ssh -t g1-wifi "$PY /tmp/g1_arm_can_test.py --stage all --look --until lift --speed-rung 7 --auto --auto-pause 0"
 # laptop-only planner (no robot): --offline --stage dryrun --urdf <g1_29dof_rev_1_0.urdf> --can-x … --table-x …
 ```
 
 `--until lift` is the proven path. `--until descend --no-hand` is the placement-only rehearsal. `--stage recover --resume-plan <json>` retraces a stranded run (takeover at weight 1, no 0→1 ramp). `--stage check` / `fsm` / `step` still send no / one-joint motion.
+
+Arm speed is a ladder (`--speed-rung`); the planned joints stay the same. **1** = 1.8× / 0.25. **2** = 1.5× / 0.35. **3** = 1.2× / 0.45. **4** = 1.0× / 0.50 (Unitree example). **5** = 0.85× / 0.60. **6** = 0.70× / 0.70. **7** = 0.55× / 0.75 (current transit; August program vmax). Raise / table vias / lift / park follow the rung. Pregrasp, approach, descend, and lower stay on the rung-2 clock (`--fine-time-scale 1.5 --fine-vmax 0.35`). `--auto` does not pause between stages (`--auto-pause 0`); the 1.5 s pregrasp dwell is kept so sag has settled before contact.
 
 The dryrun **is** the live plan: every waypoint's joints are stored and replayed (live re-solve once folded the arm into the chest). Interpolants are checked against the LOOK table slab and a mesh-derived torso/head/hips box model. The standing controller's waist is held upright (kp 120 + bounded integral); a second bounded integral on the arm joints cancels gravity sag (~4 cm at the palm at kp 120). Cross-midline reaches use the elbow-swivel null space so the upper arm stays off the chest.
 
@@ -290,7 +292,7 @@ ssh -t g1-wifi "$PY /tmp/g1_fetch.py --stage walk-test --allow-walk --auto --con
 ssh -t g1-wifi "$PY /tmp/g1_fetch.py --stage reposition --allow-walk --allow-right --auto"   # LOOK -> step -> LOOK, no arm
 ssh -t g1-wifi "$PY /tmp/g1_fetch.py --stage fetch --allow-walk --allow-right --auto"        # proven left-arm path
 # right arm: rehearse placement first
-ssh -t g1-wifi "$PY /tmp/g1_arm_can_test.py --arm right --allow-right --stage all --look --until pregrasp --no-hand --time-scale 1.8 --vmax 0.25"
+ssh -t g1-wifi "$PY /tmp/g1_arm_can_test.py --arm right --allow-right --stage all --look --until pregrasp --no-hand --speed-rung 7"
 ```
 
 ## Safe next steps on the real robot (in order)

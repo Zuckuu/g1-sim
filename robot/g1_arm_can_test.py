@@ -145,13 +145,22 @@ parser.add_argument("--other-kd", type=float, default=1.5)
 parser.add_argument("--waist-kp", type=float, default=120.0, help="PD on the 3 waist joints. At 60 the extended arm's ~11 Nm folded the waist 10 deg forward")
 parser.add_argument("--waist-kd", type=float, default=3.0)
 parser.add_argument("--waist-upright", type=float, nargs=3, default=[0.0, 0.0, 0.0], help="waist yaw/roll/pitch target (rad); a slow bounded integral holds the torso there")
-parser.add_argument("--vmax", type=float, default=0.35, help="rad/s cap on every arm joint command (Unitree example 0.5, August program 0.75)")
+parser.add_argument("--vmax", type=float, default=0.35, help="rad/s cap on every arm joint command (Unitree example 0.5, August program 0.75). Overridden by --speed-rung unless --vmax is also passed.")
 parser.add_argument("--windup", type=float, default=0.12, help="rad: the command may lead the measured joint by at most this (kp*windup = max static torque)")
 parser.add_argument("--press-lead", type=float, default=0.012, help="rad: extra command lead allowed once a contact move (approach/descend/lower/jog) has "
                     "finished interpolating; kp*press-lead = the palm press torque (120*0.03 = 3.6 Nm, ~7 N at the palm)")
 parser.add_argument("--ik-gain", type=float, default=0.5, help="unused for palm moves (joint spline); kept for a Cartesian servo if we re-enable one")
 parser.add_argument("--ik-lambda", type=float, default=0.05)
-parser.add_argument("--time-scale", type=float, default=1.0, help="multiply every motion duration")
+parser.add_argument("--time-scale", type=float, default=1.0, help="multiply every motion duration. Overridden by --speed-rung unless --time-scale is also passed.")
+parser.add_argument("--speed-rung", type=int, default=None, choices=[1, 2, 3, 4, 5, 6, 7],
+                    help="arm-motion increment (same planned joints): "
+                         "1=1.8x/0.25, 2=1.5x/0.35, 3=1.2x/0.45, 4=1.0x/0.50 Unitree example, "
+                         "5=0.85x/0.60, 6=0.70x/0.70, 7=0.55x/0.75 August vmax. "
+                         "Pregrasp/approach/descend/lower stay on --fine-time-scale/--fine-vmax.")
+parser.add_argument("--fine-time-scale", type=float, default=1.5,
+                    help="floor on time-scale for pregrasp/approach/descend/lower (rung 2; never faster than this even at higher rungs)")
+parser.add_argument("--fine-vmax", type=float, default=0.35,
+                    help="cap on vmax for those near-can moves (rad/s)")
 parser.add_argument("--no-early-arrive", action="store_true",
                     help="free-space waypoints always dwell the full 1.5 s after the spline (default: done once the joints are within "
                          "0.02 rad and the palm within 8 mm, >= 0.2 s after the spline; pregrasp always dwells)")
@@ -176,7 +185,7 @@ parser.add_argument("--aux-target", type=float, default=1.0)
 parser.add_argument("--rpc", action="store_true", help="check: also query motion_switcher.CheckMode and robot_state.ServiceList (read-only RPC)")
 parser.add_argument("--stop-arm-example", action="store_true", help="switch Unitree's g1_arm_example service off first (it owns rt/arm_sdk when an action plays)")
 parser.add_argument("--auto", action="store_true", help="no operator prompts (stages follow each other after --auto-pause s)")
-parser.add_argument("--auto-pause", type=float, default=1.0)
+parser.add_argument("--auto-pause", type=float, default=0.0, help="s to wait at each old operator prompt in --auto (0 = no pause; 1 was for a live abort window)")
 parser.add_argument("--camera", default="http://127.0.0.1:8080/rgb.mjpg", help="MJPEG stream to grab a still from at each stage ('' = off)")
 parser.add_argument("--clearance", type=float, default=0.08,
                     help="m above the TABLE (not the can top) for the horizontal via on a long reach; capped at 12 cm so the shoulder stays in the reaching pose")
@@ -194,6 +203,18 @@ parser.add_argument("--label", default="")
 parser.add_argument("--out", default="")
 args = parser.parse_args()
 
+# Same planned joints; only the spline clock and the per-tick joint cap change.
+SPEED_RUNGS = {
+    1: (1.8, 0.25), 2: (1.5, 0.35), 3: (1.2, 0.45), 4: (1.0, 0.50),
+    5: (0.85, 0.60), 6: (0.70, 0.70), 7: (0.55, 0.75),
+}
+if args.speed_rung is not None:
+    ts, vm = SPEED_RUNGS[args.speed_rung]
+    if "--time-scale" not in sys.argv:
+        args.time_scale = ts
+    if "--vmax" not in sys.argv:
+        args.vmax = vm
+
 if args.arm == "right" and not args.allow_right:
     sys.exit("refusing to drive the right arm without --allow-right")
 SIDE = args.arm
@@ -204,6 +225,18 @@ if args.can_y is None and not args.look:
     args.can_y = -0.12 if SIDE == "right" else 0.12
 DT = 0.02
 T0 = time.monotonic()
+FINE_LABELS = ("pregrasp", "approach", "descend", "lower", "jog")
+
+
+def clock_for(label, contact=False):
+    """Transit follows --speed-rung. Near-can palm moves never go faster than the last proven fine clock."""
+    ts, vm = float(args.time_scale), float(args.vmax)
+    lab = (label or "").split()[0].lower()
+    fine = bool(contact) or lab in FINE_LABELS
+    if fine:
+        ts = max(ts, float(args.fine_time_scale))
+        vm = min(vm, float(args.fine_vmax))
+    return ts, vm, fine
 
 
 def now():
@@ -790,7 +823,10 @@ class ArmSdk(threading.Thread):
         p1 = self.R_pL @ np.asarray(p_goal_L)
         R1 = self.R_pL @ R_goal if R_goal is not None else R0
         q_seed = st["q"].copy()
-        q0 = self.cmd[ARM].copy()
+        # cmd is already q_nom + ierr (sag hold). Spline in nominal joints so tick's
+        # q_des = lerp(q0, q1) + ierr equals cmd at a=0; using cmd as q0 double-counted
+        # ierr and popped the palm a few cm up at every waypoint.
+        q0 = self.cmd[ARM].copy() - self.ierr
         q_seed[ARM] = q0
         if q_plan is not None:
             q_est = q_seed.copy()
@@ -850,25 +886,27 @@ class ArmSdk(threading.Thread):
             return False
         self.q_nom = q0.copy()
         dq_max = float(np.max(np.abs(q1 - q0)))
-        T_eff = max(0.3, T * args.time_scale, 1.57 * dq_max / (0.8 * args.vmax))
+        ts, vm, fine = clock_for(label, contact)
+        T_eff = max(0.3, T * ts, 1.57 * dq_max / (0.8 * vm))
         self.progress = {"best": None, "t": now()}
         # free-space waypoints may finish as soon as the joints are on the plan (see tick); pregrasp keeps the full
         # dwell so the sag integral has settled right before the contact moves
         early = (not contact) and (not args.no_early_arrive) and label != "pregrasp"
         self.motion = dict(kind="joint", q0=q0, q1=q1, T=T_eff, t0=now(), label=label, done=False,
-                           contact=contact, cmd_a1=None, p0=p0, p1=p1, R1=R1, early=early)
+                           contact=contact, cmd_a1=None, p0=p0, p1=p1, R1=R1, early=early, vmax=vm)
         log("MOVE %s: joint spline palm %s -> %s (pelvis), %.1fs%s, dq_max %.2f rad, %s %.1f mm / %.1f deg%s | q1 %s" % (
             label, np.round(p0, 3).tolist(), np.round(p1, 3).tolist(), T_eff,
-            " (stretched for vmax)" if T_eff > T * args.time_scale + 1e-6 else "",
+            " (stretched for vmax %.2f)" % vm if T_eff > T * ts + 1e-6 else "",
             dq_max, "planned joints, FK rest" if q_plan is not None else "IK rest", ep * 1000, math.degrees(er),
-            ", contact move" if contact else "", np.round(q1, 2).tolist()))
+            (", contact/fine" if fine else ""), np.round(q1, 2).tolist()))
         if ep > 0.02 or er > 0.15:
             log("MOVE %s: weak IK (%.1f mm / %.1f deg) - check the goal / can estimate" % (label, ep * 1000, math.degrees(er)))
         return True
 
     def start_joint_motion(self, q_goal_arm, T, label):
-        self.motion = dict(kind="joint", q0=self.cmd[ARM].copy(), q1=np.asarray(q_goal_arm, dtype=float), T=max(0.3, T * args.time_scale),
-                           t0=now(), label=label, done=False)
+        ts, vm, _fine = clock_for(label, False)
+        self.motion = dict(kind="joint", q0=self.cmd[ARM].copy(), q1=np.asarray(q_goal_arm, dtype=float),
+                           T=max(0.3, T * ts), t0=now(), label=label, done=False, vmax=vm)
         log("MOVE %s: joints %s -> %s, %.1fs" % (label, np.round(self.motion["q0"], 3).tolist(), np.round(self.motion["q1"], 3).tolist(), self.motion["T"]))
 
     def start_weight(self, w_goal, T, label):
@@ -953,11 +991,13 @@ class ArmSdk(threading.Thread):
                 if palm_planned and not m.get("contact") and st is not None and a >= 1.0:
                     # kp 120 sags ~0.03 rad/joint with the arm out (4 cm at the palm; via-mid3 was frozen as "blocked"
                     # for exactly that). The plan is the joints: while holding a waypoint, slowly pull them onto it.
-                    # Bounded (0.06 rad = 7 Nm) and carried into the next move as feed-forward.
+                    # Bounded (0.06 rad = 7 Nm) and carried into the next move as feed-forward
+                    # (next spline starts at cmd-ierr so this is not applied twice).
                     self.ierr = np.clip(self.ierr + 1.5 * (m["q1"] - st["q"][ARM]) * DT, -0.06, 0.06)
                 if palm_planned:
                     q_des = q_des + self.ierr       # feed-forward for contact moves too (no integration there)
-                step = np.clip(q_des - self.cmd[ARM], -args.vmax * DT, args.vmax * DT)
+                vmax = float(m.get("vmax", args.vmax))
+                step = np.clip(q_des - self.cmd[ARM], -vmax * DT, vmax * DT)
                 q_new = self.cmd[ARM] + step
                 if st is not None:
                     # every motion is windup-limited: a blocked joint can never be asked for more than kp*windup.
@@ -1151,7 +1191,7 @@ def raise_goal(p_palm_now_L):
 
 
 def grab_still(tag):
-    if not args.camera:
+    if not args.camera or args.auto:
         return None
     import urllib.request
     path = out_path()[:-5] + "-%s.jpg" % tag
@@ -2580,7 +2620,12 @@ def replay_plan_stage(stage, T, R_goal):
             stage, name, np.round(s["goal_L"], 3).tolist(),
             "" if CAN.get("z") is None else "  (%.0f cm above the table, %.0f cm from the current palm)" % (
                 (s["goal_L"][2] - CAN["z"]) * 100, float(np.linalg.norm(s["goal_L"] - p_now_L)) * 100)))
-        Ti = max(1.2, T * (0.6 if i + 1 < n and name.startswith("via") else 1.0), s.get("T", 2.5))
+        # Intermediate 8 cm vias were stuck at 2.5 s (then * time-scale) because s["T"] sat in the max()
+        # and the 0.6 factor never won. Use the planned step duration; shorten hops that are not the last in the stage.
+        Ti = float(s.get("T", T))
+        if i + 1 < n and name.startswith("via"):
+            Ti *= 0.6
+        Ti = max(1.2, Ti)
         if not _move_palm_once(name, s["goal_L"], Ti, R_goal, False, q_plan=s["q"]):
             return False
         if ARMSDK.frozen:
@@ -2879,9 +2924,12 @@ else:
         "?" if args.can_x is None else "%.2f" % args.can_x,
         "?" if args.can_y is None else "%.2f" % args.can_y,
         "?" if args.can_z is None else "%.3f" % args.can_z)
-log("G1 ARM+CAN test: %s arm, stage %s, %s, kp/kd %.0f/%.1f, vmax %.2f rad/s, windup %.2f rad%s" %
-    (SIDE, args.stage, can_txt, args.kp, args.kd, args.vmax, args.windup,
-     (" | " + args.label) if args.label else ""))
+log("G1 ARM+CAN test: %s arm, stage %s, %s, kp/kd %.0f/%.1f, vmax %.2f rad/s, time-scale %.2f%s, fine %.2fx/%.2f (pregrasp/approach/descend/lower), windup %.2f rad%s" %
+    (SIDE, args.stage, can_txt, args.kp, args.kd, args.vmax, args.time_scale,
+     "" if args.speed_rung is None else " (speed-rung %d; next is %s)" % (
+         args.speed_rung, "done" if args.speed_rung >= max(SPEED_RUNGS) else "%d=%.2fx/%.2f" % (
+             args.speed_rung + 1, SPEED_RUNGS[args.speed_rung + 1][0], SPEED_RUNGS[args.speed_rung + 1][1])),
+     args.fine_time_scale, args.fine_vmax, args.windup, (" | " + args.label) if args.label else ""))
 
 info = do_check()
 if args.rpc or args.stage == "check":

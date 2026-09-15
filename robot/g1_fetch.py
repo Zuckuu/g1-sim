@@ -78,8 +78,8 @@ parser.add_argument("--no-lidar", action="store_true", help="camera-only search"
 parser.add_argument("--look-xmax", type=float, default=2.6, help="m: camera LOOK depth ROI ahead during the approach")
 parser.add_argument("--look-ymax", type=float, default=1.2)
 parser.add_argument("--approach-range", type=float, default=1.10, help="m: step forward toward a LiDAR/camera target while its table edge is farther than this")
-parser.add_argument("--grasp-args", default="--until lift --time-scale 1.8 --vmax 0.25 --auto --auto-pause 1",
-                    help="extra flags for the grasp run (fetch stage)")
+parser.add_argument("--grasp-args", default="--until lift --speed-rung 7 --auto --auto-pause 0",
+                    help="extra flags for the grasp run (fetch stage). speed-rung 7 = 0.55x/0.75 transit; near-can moves stay at 1.5x/0.35")
 parser.add_argument("--out", default=None)
 args = parser.parse_args()
 
