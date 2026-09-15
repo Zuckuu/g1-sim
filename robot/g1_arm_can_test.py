@@ -152,6 +152,9 @@ parser.add_argument("--press-lead", type=float, default=0.012, help="rad: extra 
 parser.add_argument("--ik-gain", type=float, default=0.5, help="unused for palm moves (joint spline); kept for a Cartesian servo if we re-enable one")
 parser.add_argument("--ik-lambda", type=float, default=0.05)
 parser.add_argument("--time-scale", type=float, default=1.0, help="multiply every motion duration")
+parser.add_argument("--no-early-arrive", action="store_true",
+                    help="free-space waypoints always dwell the full 1.5 s after the spline (default: done once the joints are within "
+                         "0.02 rad and the palm within 8 mm, >= 0.2 s after the spline; pregrasp always dwells)")
 parser.add_argument("--weight-seconds", type=float, default=3.0, help="arm_sdk weight ramp 0->1 (and back)")
 parser.add_argument("--pos-tol", type=float, default=0.008, help="m: motion counts as arrived below this palm error")
 parser.add_argument("--rot-tol", type=float, default=0.10, help="rad")
@@ -179,6 +182,8 @@ parser.add_argument("--clearance", type=float, default=0.08,
                     help="m above the TABLE (not the can top) for the horizontal via on a long reach; capped at 12 cm so the shoulder stays in the reaching pose")
 parser.add_argument("--look", action="store_true", help="run D435i table/can discovery before dryrun/motion and fill --can-x/y/z")
 parser.add_argument("--look-json", default="/tmp/g1-look-latest.json", help="where --stage look writes the estimate")
+parser.add_argument("--look-xmax", type=float, default=0.95, help="m: LOOK depth ROI ahead (g1_fetch passes ~2.6 for the approach)")
+parser.add_argument("--look-ymax", type=float, default=0.55, help="m: LOOK depth ROI to each side")
 parser.add_argument("--vision", default="http://127.0.0.1:8080", help="g1_vision_stream.py base URL (look reads /color.jpg /depth.f32 /calib.json); '' = open the D435i directly")
 parser.add_argument("--keep", action="store_true", help="handshake/raise: do not park at the end (leave the arm where it is, weight 1)")
 parser.add_argument("--table-x", type=float, default=None, help="near edge of the table (level x, m); default from --look")
@@ -290,6 +295,16 @@ class Kin:
             J = pin.computeFrameJacobian(self.model, self.data, q, self.fid, pin.LOCAL_WORLD_ALIGNED)
             return np.array(J[:, ARM])
 
+    def fk_jac(self, q29):
+        """palm p, R and the 6x7 arm Jacobian from ONE kinematics pass (computeFrameJacobian runs the forward
+        kinematics; the palm placement is read from it). Same numbers as fk() + jac(), half the pinocchio work -
+        the dryrun's IK sweep is ~40k of these on the Jetson."""
+        q = np.asarray(q29, dtype=float)
+        with self.lock:
+            J = pin.computeFrameJacobian(self.model, self.data, q, self.fid, pin.LOCAL_WORLD_ALIGNED)
+            M = pin.updateFramePlacement(self.model, self.data, self.fid)
+            return M.translation.copy(), M.rotation.copy(), np.array(J[:, ARM])
+
     def sole_min_z(self, q29, R_level):
         """lowest foot sphere point, in the level frame (pelvis origin)."""
         q = np.asarray(q29, dtype=float)
@@ -309,21 +324,24 @@ class Kin:
         unchanged, the elbow swings. Used to keep the upper arm off the chest when reaching across the midline."""
         q = np.asarray(q29, dtype=float).copy()
         I7 = np.eye(7)
+        lam_I6 = (args.ik_lambda ** 2) * np.eye(6)
+        lo, hi = self.lo[ARM] + 0.03, self.hi[ARM] - 0.03
+        qb = None if q_bias is None else np.asarray(q_bias, dtype=float)
         for _ in range(iters):
-            p, R = self.fk(q)
+            p, R, J = self.fk_jac(q)
             e = np.concatenate([p_goal - p, pin.log3(R_goal @ R.T)])
-            if np.linalg.norm(e[:3]) < 0.001 and np.linalg.norm(e[3:]) < 0.01 and q_bias is None:
+            converged = np.linalg.norm(e[:3]) < 0.001 and np.linalg.norm(e[3:]) < 0.01
+            if converged and qb is None:
                 break
-            J = self.jac(q)
-            JJt = J @ J.T + (args.ik_lambda ** 2) * np.eye(6)
+            JJt = J @ J.T + lam_I6
             dq = np.clip(0.5 * (J.T @ np.linalg.solve(JJt, e)), -0.05, 0.05)
-            if q_bias is not None:
+            if qb is not None:
                 N = I7 - J.T @ np.linalg.solve(JJt, J)
-                dq_ns = np.clip(N @ (k_ns * (np.asarray(q_bias, dtype=float) - q[ARM])), -0.03, 0.03)
-                if np.linalg.norm(e[:3]) < 0.001 and np.linalg.norm(e[3:]) < 0.01 and np.max(np.abs(dq_ns)) < 1e-4:
+                dq_ns = np.clip(N @ (k_ns * (qb - q[ARM])), -0.03, 0.03)
+                if converged and np.max(np.abs(dq_ns)) < 1e-4:
                     break
                 dq = dq + dq_ns
-            q[ARM] = np.minimum(np.maximum(q[ARM] + dq, self.lo[ARM] + 0.03), self.hi[ARM] - 0.03)
+            q[ARM] = np.minimum(np.maximum(q[ARM] + dq, lo), hi)
         p, R = self.fk(q)
         return q, float(np.linalg.norm(p_goal - p)), float(np.linalg.norm(pin.log3(R_goal @ R.T)))
 
@@ -834,8 +852,11 @@ class ArmSdk(threading.Thread):
         dq_max = float(np.max(np.abs(q1 - q0)))
         T_eff = max(0.3, T * args.time_scale, 1.57 * dq_max / (0.8 * args.vmax))
         self.progress = {"best": None, "t": now()}
+        # free-space waypoints may finish as soon as the joints are on the plan (see tick); pregrasp keeps the full
+        # dwell so the sag integral has settled right before the contact moves
+        early = (not contact) and (not args.no_early_arrive) and label != "pregrasp"
         self.motion = dict(kind="joint", q0=q0, q1=q1, T=T_eff, t0=now(), label=label, done=False,
-                           contact=contact, cmd_a1=None, p0=p0, p1=p1, R1=R1)
+                           contact=contact, cmd_a1=None, p0=p0, p1=p1, R1=R1, early=early)
         log("MOVE %s: joint spline palm %s -> %s (pelvis), %.1fs%s, dq_max %.2f rad, %s %.1f mm / %.1f deg%s | q1 %s" % (
             label, np.round(p0, 3).tolist(), np.round(p1, 3).tolist(), T_eff,
             " (stretched for vmax)" if T_eff > T * args.time_scale + 1e-6 else "",
@@ -994,15 +1015,24 @@ class ArmSdk(threading.Thread):
                             pr["best"], pr["t"] = err, t
                         budget_out = bool(m.get("contact") and m.get("cmd_a1") is not None and
                                           np.any(np.abs(q_new - m["cmd_a1"]) >= args.press_lead - 1e-6))
-                        if not m.get("contact") and t - m["t0"] > m["T"] + 1.5:
+                        if not m.get("contact"):
+                            dwell = t - m["t0"] - m["T"]
                             jerr = np.abs(m["q1"] - st["q"][ARM])
-                            if float(jerr.max()) > 0.15 or err > 0.08:
-                                self.freeze("%s blocked: joint %s is %.2f rad off its target, palm %.0f mm off" % (
-                                    m["label"], JOINT_NAMES[ARM[int(jerr.argmax())]], float(jerr.max()), err * 1000))
-                            else:
+                            if dwell > 1.5:
+                                if float(jerr.max()) > 0.15 or err > 0.08:
+                                    self.freeze("%s blocked: joint %s is %.2f rad off its target, palm %.0f mm off" % (
+                                        m["label"], JOINT_NAMES[ARM[int(jerr.argmax())]], float(jerr.max()), err * 1000))
+                                else:
+                                    m["done"] = True
+                                    log("ARRIVED %s: palm err %.1f mm, rot %.1f deg, palm %s | joint err max %.3f rad, sag comp %s" % (
+                                        m["label"], err * 1000, math.degrees(rot_err), np.round(p_cur, 3).tolist(), float(jerr.max()),
+                                        np.round(self.ierr, 3).tolist()))
+                            elif m.get("early") and dwell >= 0.2 and float(jerr.max()) < 0.02 and err < 0.008:
+                                # the joints are on the plan already (the 1.5 s dwell was for the sag integral, which is
+                                # carried into the next move anyway); cycle 2 spent 1.5 s at every one of 14 waypoints
                                 m["done"] = True
-                                log("ARRIVED %s: palm err %.1f mm, rot %.1f deg, palm %s | joint err max %.3f rad, sag comp %s" % (
-                                    m["label"], err * 1000, math.degrees(rot_err), np.round(p_cur, 3).tolist(), float(jerr.max()),
+                                log("ARRIVED %s (early, %.1fs after the spline): palm err %.1f mm, rot %.1f deg, palm %s | joint err max %.3f rad, sag comp %s" % (
+                                    m["label"], dwell, err * 1000, math.degrees(rot_err), np.round(p_cur, 3).tolist(), float(jerr.max()),
                                     np.round(self.ierr, 3).tolist()))
                         elif m.get("contact") and err < args.pos_tol and rot_err < args.rot_tol:
                             m["done"] = True
@@ -1701,7 +1731,7 @@ def do_look(info):
     h, w = depth.shape
     us, vs = np.meshgrid(np.arange(0, w, 2), np.arange(0, h, 2))
     z = depth[vs, us]
-    valid = np.isfinite(z) & (z > 0.25) & (z < 2.2)
+    valid = np.isfinite(z) & (z > 0.25) & (z < max(2.2, args.look_xmax + 0.6))
     us, vs, z = us[valid], vs[valid], z[valid]
     x_opt = (us - K["cx"]) * z / K["fx"]
     y_opt = (vs - K["cy"]) * z / K["fy"]
@@ -1710,7 +1740,7 @@ def do_look(info):
     p_pelvis = (R_cam @ p_link.T).T + t_cam
     p_L = (R_pL.T @ p_pelvis.T).T
     uv = np.stack([us, vs], axis=1).astype(int)
-    roi = (p_L[:, 0] > 0.08) & (p_L[:, 0] < 0.95) & (np.abs(p_L[:, 1]) < 0.55) & (p_L[:, 2] > -0.50) & (p_L[:, 2] < 0.25)
+    roi = (p_L[:, 0] > 0.08) & (p_L[:, 0] < args.look_xmax) & (np.abs(p_L[:, 1]) < args.look_ymax) & (p_L[:, 2] > -0.50) & (p_L[:, 2] < 0.25)
     p_roi, uv_roi = p_L[roi], uv[roi]
     log("LOOK: %d depth pts, %d in front-of-robot ROI" % (p_L.shape[0], p_roi.shape[0]))
     fitted = _ransac_table(p_roi)
@@ -1724,14 +1754,38 @@ def do_look(info):
     below_mm = z_table * 1000
     tab_xy = p_roi[table_mask, :2]
     table_x_min = None
+    edge_yaw_deg = None
+    edge_bins = 0
+    table_y_pct = None
     if len(tab_xy):
         front = tab_xy[tab_xy[:, 0] > 0.02]
         if len(front):
             table_x_min = float(np.percentile(front[:, 0], 8))
-    log("LOOK: table z_level=%+.3f m (%.0f mm %s pelvis), tilt %.1f deg, %d inliers%s%s" % (
+        # lateral extent of the visible table top (10/50/90 % of y): the search turns toward where the table continues
+        table_y_pct = [round(float(v), 3) for v in np.percentile(tab_xy[:, 1], (10, 50, 90))]
+        # front-edge orientation: nearest table x per 4 cm y-bin, line x = a + b*y (robust refit), yaw = atan(b).
+        # The robot squares up to the table by turning -yaw (CCW positive): a CCW-rotated robot sees the edge farther
+        # away on its left (b > 0). Used by g1_fetch.py before strafing (a 20 deg drift lost the can from view tonight).
+        ys_e, xs_e = [], []
+        for yb in np.arange(-0.45, 0.45, 0.04):
+            sel = (front[:, 1] >= yb) & (front[:, 1] < yb + 0.04)
+            if int(np.sum(sel)) >= 25:
+                ys_e.append(yb + 0.02)
+                xs_e.append(float(np.percentile(front[sel, 0], 5)))
+        if len(ys_e) >= 5:
+            A = np.stack([np.ones(len(ys_e)), np.array(ys_e)], axis=1)
+            xs_a = np.array(xs_e)
+            coef = np.linalg.lstsq(A, xs_a, rcond=None)[0]
+            keep = np.abs(xs_a - A @ coef) < 0.03            # drop bins behind the can / at a corner
+            if int(keep.sum()) >= 5:
+                coef = np.linalg.lstsq(A[keep], xs_a[keep], rcond=None)[0]
+                edge_yaw_deg = math.degrees(math.atan(float(coef[1])))
+                edge_bins = int(keep.sum())
+    log("LOOK: table z_level=%+.3f m (%.0f mm %s pelvis), tilt %.1f deg, %d inliers%s%s%s" % (
         z_table, abs(below_mm), "above" if z_table > 0 else "below", tilt_deg, int(np.sum(table_mask)),
         "" if table_floor is None else ", floor->top %.3f m" % table_floor,
-        "" if table_x_min is None else ", front x=%.3f m" % table_x_min))
+        "" if table_x_min is None else ", front x=%.3f m" % table_x_min,
+        "" if edge_yaw_deg is None else ", edge yaw %+.1f deg (%d bins; robot squares up by turning %+.1f deg)" % (edge_yaw_deg, edge_bins, -edge_yaw_deg)))
     scored = []
     try:
         scored = _cans_from_color(color, K, t_cam, R_cam, R_pL, nvec, d_plane, tab_xy, 0.0,
@@ -1746,6 +1800,8 @@ def do_look(info):
     out = dict(ok=False, table_z_level=round(z_table, 4), table_tilt_deg=round(tilt_deg, 2),
                table_floor_m=None if table_floor is None else round(table_floor, 4),
                table_x_min=None if table_x_min is None else round(table_x_min, 3),
+               table_edge_yaw_deg=None if edge_yaw_deg is None else round(edge_yaw_deg, 1), table_edge_bins=edge_bins,
+               table_y_pct=table_y_pct,
                table_inliers=int(np.sum(table_mask)), n_clusters=len(scored),
                camera_origin_level=origin_L.round(3).tolist(), view_level=view_L.round(3).tolist(),
                pelvis_height=ph, candidates=[{k: (v.round(3).tolist() if hasattr(v, "round") else v)
@@ -1753,6 +1809,14 @@ def do_look(info):
     if can is None:
         log("LOOK: table found, no 12 oz can in the D435i view")
         out["why"] = "no can"
+        # search cue for g1_fetch: a blue, can-like blob that was rejected (clipped at the image edge, too small,
+        # low score) still says which way to strafe. The can at the right edge of the frame read 38 mm / score 0.149.
+        hints = [c for c in scored if c.get("blue_frac", 0) >= 0.4 or c.get("clipped")]
+        if hints:
+            hbest = max(hints, key=lambda c: c.get("score", 0))
+            out["hint_xy"] = [round(float(hbest["xy"][0]), 3), round(float(hbest["xy"][1]), 3)]
+            out["hint_why"] = "%s %.0f mm, score %.2f%s" % (hbest.get("ident"), 2000 * hbest["radius"], hbest.get("score", 0), ", clipped" if hbest.get("clipped") else "")
+            log("LOOK hint: blue blob at x=%.3f y=%+.3f (%s) - not a confirmed can" % (out["hint_xy"][0], out["hint_xy"][1], out["hint_why"]))
     else:
         can_x, can_y = float(can["xy"][0]), float(can["xy"][1])
         can_z = z_table  # can BASE = table top
@@ -1901,10 +1965,13 @@ try:
 
         def fsm(self):
             fid = self._get(7001)
-            mode = self._get(7002)
-            out = dict(fsm_id=fid, fsm_mode=mode, balance_mode=None, stand_height=None)
-            # balance / stand height are rejected (code 7301) in ZeroTorque; skip them until we are standing
-            if fid not in (None, 0):
+            out = dict(fsm_id=fid, fsm_mode=None, balance_mode=None, stand_height=None)
+            if fid is None:
+                return out          # the service is not answering (AI standing 802): do not pay a second timeout
+            out["fsm_mode"] = self._get(7002)
+            # balance / stand height are rejected (code 7301) in ZeroTorque and time out in the AI FSMs (802 answers
+            # 7001 only): ask for them only when the mode query answered
+            if fid != 0 and out["fsm_mode"] is not None:
                 out["balance_mode"] = self._get(7003)
                 out["stand_height"] = self._get(7005)
             return out
@@ -1936,26 +2003,25 @@ def fsm_text(f):
         f.get("stand_height") if f.get("stand_height") is not None else "n/a")
 
 
-_LOCO = {"c": None}
+_LOCO = {"c": None, "dead": False}
 
 
-def loco_fsm():
+def loco_fsm(retry=False):
+    """One query per call, 1 s timeout. In the AI standing FSM (802) the loco service does not answer at all
+    (code 3104): the old create-retry-query pattern cost ~7.5 s at check and again at takeover. After the first
+    no-answer of a session later calls return None at once; --stage fsm polls with retry=True."""
     if LocoQuery is None:
+        return None
+    if _LOCO["dead"] and not retry:
         return None
     try:
         if _LOCO["c"] is None:
             c = LocoQuery()
-            c.SetTimeout(2.0)
+            c.SetTimeout(1.0)
             c.Init()
             _LOCO["c"] = c
         f = _LOCO["c"].fsm()
-        if f.get("fsm_id") is None:
-            _LOCO["c"] = None
-            c = LocoQuery()
-            c.SetTimeout(2.0)
-            c.Init()
-            _LOCO["c"] = c
-            f = c.fsm()
+        _LOCO["dead"] = f.get("fsm_id") is None
         return f
     except Exception as e:  # noqa: BLE001
         log("loco query failed: %r" % (e,))
@@ -1983,7 +2049,7 @@ def do_fsm_watch():
     t_last_line = 0.0
     t_end = now() + args.watch_seconds if args.watch_seconds > 0 else None
     while t_end is None or now() < t_end:
-        f = loco_fsm()
+        f = loco_fsm(retry=True)
         st = state()
         with LOCK:
             kp = None if LOWCMD["kp"] is None else LOWCMD["kp"].copy()
@@ -2298,14 +2364,19 @@ def park():
     ARMSDK.set_level(st)
     ARMSDK.cmd[ARM] = st["q"][ARM]
     done = [s for s in PLAN.get("done", []) if s in PLAN["steps"]]
-    if done:
+    # Only the transit waypoints are a way home: raise/fold and the table vias (clearance height, verified interpolants).
+    # pregrasp/approach/descend/lift/lower are the excursion at the can - cycle 3's park retraced lower -> lift ->
+    # descend -> approach first (30 s, palm back beside the released can) because the nearest executed waypoint was
+    # retreat and everything before it in execution order was replayed.
+    transit = [s for s in done if plan_stage_of(s) == "raise" or s.startswith("via")]
+    if transit:
         p_now, _ = KIN.fk(state()["q"])
         p_now_L = ARMSDK.R_pL.T @ p_now
-        dists = [float(np.linalg.norm(p_now_L - PLAN["steps"][n]["goal_L"])) for n in done]
+        dists = [float(np.linalg.norm(p_now_L - PLAN["steps"][n]["goal_L"])) for n in transit]
         k = int(np.argmin(dists))
-        todo = done[:k] if dists[k] < 0.06 else done[:k + 1]   # at waypoint k -> go to k-1, ...; between -> nearest first
+        todo = transit[:k] if dists[k] < 0.06 else transit[:k + 1]   # at waypoint k -> go to k-1, ...; between -> nearest first
         log("PARK: palm %s is %.0f mm from %s; retracing %s -> home" % (
-            np.round(p_now_L, 3).tolist(), dists[k] * 1000, done[k], " -> ".join(reversed(todo)) if todo else "(nothing)"))
+            np.round(p_now_L, 3).tolist(), dists[k] * 1000, transit[k], " -> ".join(reversed(todo)) if todo else "(nothing)"))
         for name in reversed(todo):
             s = PLAN["steps"][name]
             ok_step = _move_palm_once("park-" + name, s["goal_L"], max(1.5, s.get("T", 2.5)), R_PALM_DES, False, q_plan=s["q"])

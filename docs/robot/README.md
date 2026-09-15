@@ -250,6 +250,49 @@ Left-hand workspace on this counter (table ~0.95 m, edge x≈0.32): can within ~
 
 `--stage step` **refuses** to publish while FSM id is 0 / kp is 0. First check on an earlier boot (2026-09-11 01:10): FSM id 0 ZeroTorque; camera later: D435i on the Jetson USB bus, stream on `http://127.0.0.1:8080`.
 
+## Fetch: arm choice + walking to the can (`robot/g1_fetch.py`)
+
+The grasp above assumes the can is already inside one arm's workspace. `g1_fetch.py` wraps it: LOOK, pick the arm,
+step/strafe until the can is in that arm's band, then run the grasp as a subprocess. Locomotion is Unitree's loco
+API (`SetVelocity`, api 7105 on service `sport`) — the same call `xr_teleoperate --motion` uses while the robot is
+in control mode in the **ai** motion-switcher mode with arms on `arm_sdk`, i.e. our exact configuration. From a
+lightweight process the service answers GETs in ~85 ms (FSM id **802**, mode 0); the 3104 timeouts seen from the arm
+tool were that process's own 1 kHz DDS load. Odometry: `rt/odommodestate` at 52 Hz (position, velocity, IMU rpy),
+zero drift standing still. Battery: `rt/lf/bmsstate` soc.
+
+**Workspace map** (offline planner, `--offline` dryruns over a grid, can 0.16 m above the pelvis; `docs/robot/reach_map_{0.26,0.30,0.34}.json`, key = table edge distance):
+each arm reaches cans on its own side of the midline down to ~2.5 cm across it (live: left arm y = −0.006 grasped,
+y = −0.025 refused) and out to ≥ 0.25 m on its own side; depth past the table edge 0.08–0.22 m with the edge 0.30 m
+ahead (up to 0.26 m with the edge at 0.26 m, only 0.20 m at 0.34 m). Absolute limit ≈ 0.52–0.54 m from the pelvis.
+
+**Policy:** arm = left if can y ≥ 0 else right (`--allow-right` needed, else left + walk). No walk if the can is on the
+arm's side (y_side 0–0.22), 0.08–0.20 m past the edge, edge 0.25–0.36 m ahead. Farther away: LiDAR finds the counter
+**front face** (the driver crops < 1.0 m and glossy tops return little), walk in with calibrated 0.5 m/s quanta, then
+the D435i takes over within ~0.6 m. A clipped blue blob at the frame edge is a search cue, not a can estimate; the
+next LOOK has to confirm. ≤ 6 locomotion commands; deeper than 0.26 m past the edge → "unreachable, move the can".
+Refuses if FSM ∉ {802, 200}, odometry < 20 Hz, tilt > 6°, already moving, `rt/arm_sdk` active in the last 3 s,
+battery < 30 %, or without `--allow-walk`. Every command is StopMove + settle, then a fresh LOOK.
+
+**Checkpoint 2026-09-14 evening:** FSM 802 only **steps** at ≥ 0.5 m/s held ≥ 0.6–1.0 s (≤ 0.3 m/s is a lean).
+Calibrated: left 0.20/0.30 m, right ~0.22 m, forward 0.18 m (1.0 s) / 0.48 m (1.5 s), turn 16°. One `reposition`
+strafed right onto a can at the frame edge; one `--stage fetch --allow-walk --allow-right --auto` then grasped,
+lifted, held, released, and parked (fingerprint match, 156 s grasp cycle). Right-arm grasp not yet live. LiDAR
+walk-in from 1–2 m as a single `fetch` is the next test.
+
+```bash
+PY=~/miniforge3/envs/g1brainco/bin/python
+scp -o IPQoS=none robot/g1_fetch.py robot/g1_lidar_look.py robot/g1_arm_can_test.py robot/revo2_hand_test.py g1-wifi:/tmp/
+# lidar_driver: ServiceSwitch on (once per boot if it is stopped)
+ssh -t g1-wifi "$PY /tmp/g1_fetch.py --stage check"
+ssh -t g1-wifi "$PY /tmp/g1_fetch.py --stage lidar"                    # counter front face, no motion
+ssh -t g1-wifi "$PY /tmp/g1_fetch.py --stage walk-handshake --allow-walk --auto"   # SetVelocity(0,0,0)
+ssh -t g1-wifi "$PY /tmp/g1_fetch.py --stage walk-test --allow-walk --auto --continuous --test-vy 0.50 --test-seconds 1.0"
+ssh -t g1-wifi "$PY /tmp/g1_fetch.py --stage reposition --allow-walk --allow-right --auto"   # LOOK -> step -> LOOK, no arm
+ssh -t g1-wifi "$PY /tmp/g1_fetch.py --stage fetch --allow-walk --allow-right --auto"        # proven left-arm path
+# right arm: rehearse placement first
+ssh -t g1-wifi "$PY /tmp/g1_arm_can_test.py --arm right --allow-right --stage all --look --until pregrasp --no-hand --time-scale 1.8 --vmax 0.25"
+```
+
 ## Safe next steps on the real robot (in order)
 
 1. **Measure the adapter** (calipers): wrist flange face → Revo 2 base flange; also confirm fingers-along-forearm,

@@ -300,22 +300,31 @@ SUMMARY = {}
 
 
 def precheck(require_open, require_opposed):
-    log("CHECK listening 2.0 s on %s/state and %s/cmd" % (NS, NS))
-    time.sleep(2.0)
+    """listen until the hand state is clearly alive (>= 20 samples and >= 0.4 s; 2.0 s at most). The fixed 2 s window
+    cost 6 s per grasp cycle across oppose/close/release; the state rate and the foreign-cmd check use the same window."""
+    log("CHECK listening on %s/state and %s/cmd (>= 20 samples, 0.4..2.0 s)" % (NS, NS))
+    t0 = time.monotonic()
+    while True:
+        time.sleep(0.05)
+        with LOCK:
+            n = len(STATE_ROWS)
+        win = time.monotonic() - t0
+        if (n >= 20 and win >= 0.4) or win >= 2.0:
+            break
     qq, cur, t = latest()
     with LOCK:
         n = len(STATE_ROWS)
         nf = len(FOREIGN_CMDS)
     if qq is None:
-        log("no state from the %s hand: is brainco_hand.service running / the hand bound?" % args.hand)
+        log("no state from the %s hand in %.1f s: is brainco_hand.service running / the hand bound?" % (args.hand, win))
         save()
         os._exit(1)
     if nf:
-        log("someone else publishes on %s/cmd (%d msgs in 2 s): %s -> not touching the hand" % (NS, nf, FOREIGN_CMDS[0]))
+        log("someone else publishes on %s/cmd (%d msgs in %.1f s): %s -> not touching the hand" % (NS, nf, win, FOREIGN_CMDS[0]))
         save()
         os._exit(1)
-    log("state %.0f Hz | POS %s | CUR %s" % (n / 2.0, fmt_named(qq), fmt_named(cur, 1000.0, "mA", "%.0f")))
-    SUMMARY["precheck"] = dict(state_hz=n / 2.0, q=qq, cur_A=cur)
+    log("state %.0f Hz (%.1f s) | POS %s | CUR %s" % (n / win, win, fmt_named(qq), fmt_named(cur, 1000.0, "mA", "%.0f")))
+    SUMMARY["precheck"] = dict(state_hz=round(n / win, 1), window_s=round(win, 2), q=qq, cur_A=cur)
     if require_open and not args.force and max(qq) > 0.15:
         log("hand is not open (max q %.2f): run --stage release first, or --force" % max(qq))
         save()
