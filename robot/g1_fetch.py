@@ -79,7 +79,9 @@ parser.add_argument("--look-xmax", type=float, default=2.6, help="m: camera LOOK
 parser.add_argument("--look-ymax", type=float, default=1.2)
 parser.add_argument("--approach-range", type=float, default=1.10, help="m: step forward toward a LiDAR/camera target while its table edge is farther than this")
 parser.add_argument("--grasp-args", default="--until lift --speed-rung 7 --auto --auto-pause 0",
-                    help="extra flags for the grasp run (fetch stage). speed-rung 7 = 0.55x/0.75 transit; near-can moves stay at 1.5x/0.35")
+                    help="extra flags for the grasp run (fetch stage) when the LEFT arm is chosen. speed-rung 7 = 0.55x/0.75 transit; near-can moves stay at 1.5x/0.35")
+parser.add_argument("--grasp-args-right", default="--until lift --speed-rung 7 --auto --auto-pause 0 --fluid --press 0.01 --palm-y-trim 0.02",
+                    help="extra flags when the RIGHT arm is chosen (live-gated 16 Sep: right needs fluid transit, press 0.01 and palm-y-trim 0.02 for fingerprint)")
 parser.add_argument("--out", default=None)
 args = parser.parse_args()
 
@@ -690,14 +692,22 @@ def stage_policy(lk=None, allow_walk_loop=False):
         lk = None       # LOOK again from the new stance
 
 
-def stage_fetch():
-    arm, lk = stage_policy(allow_walk_loop=True)
-    cmd = [sys.executable, args.tool, "--stage", "all", "--look", "--arm", arm, "--iface", args.iface] + args.grasp_args.split()
+def grasp_cmd_for(arm):
+    """Grasp subprocess command for the chosen arm, with that arm's calibrated flags. Right keeps tonight's
+    recipe (fluid + press + y-trim); left keeps the long-proven plain rung-7 flags."""
+    cmd = [sys.executable, args.tool, "--stage", "all", "--look", "--arm", arm, "--iface", args.iface]
+    cmd += (args.grasp_args_right if arm == "right" else args.grasp_args).split()
     if arm == "right":
         if not args.allow_right:
             die("policy chose the right arm without --allow-right (should not happen)")
         cmd.append("--allow-right")
     cmd += ["--out", OUT[:-5] + "-grasp.json"]
+    return cmd
+
+
+def stage_fetch():
+    arm, lk = stage_policy(allow_walk_loop=True)
+    cmd = grasp_cmd_for(arm)
     log("GRASP: %s" % " ".join(cmd[1:]))
     if args.dry:
         log("GRASP skipped [DRY]")
@@ -712,9 +722,7 @@ def stage_fetch():
         log("GRASP: dryrun refused - one more reposition pass, then retry")
         SEARCH["turns"] = 0
         arm2, lk2 = stage_policy(allow_walk_loop=True)
-        cmd[cmd.index("--arm") + 1] = arm2
-        if arm2 == "right" and "--allow-right" not in cmd:
-            cmd.append("--allow-right")
+        cmd = grasp_cmd_for(arm2)  # rebuild: the retry may switch arms, and each arm has its own flags
         log("GRASP retry: %s" % " ".join(cmd[1:]))
         save()
         rc = subprocess.call(cmd)

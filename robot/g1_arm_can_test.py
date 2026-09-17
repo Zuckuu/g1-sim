@@ -20,6 +20,15 @@ that folds the arm into the chest). park() retraces the executed waypoints backw
 spline and only differ at the end (press-lead clamp + settle). `--offline --stage dryrun --can-x .. --table-x ..`
 runs the planner on a laptop from a recorded arm pose (no robot, no DDS).
 
+Fluid mode (--fluid = --fluid-transit --merge-contact --overlap-hand --fluid-park): after the proven raise
+swing-out, ONE joint-space Catmull-Rom spline flies the dryrun HIGH via joints with no stops (dense samples get the
+same table/body path_check; refuses under 25 mm and falls back to stepwise), then a short corrected hop drops to
+the standoff (the low tail is where tracking lag + thin margin tripped the guard twice - it stays accurate
+stepwise), ONE contact spline drops pregrasp->wrap (instead of approach+descend), the thumb opposes on a side
+thread DURING the transit (50 Hz arm loop keeps publishing; fingers still close only with the palm on the can),
+and park returns as a fluid reverse to ready plus home. Raise is never merged (hang vs reach homotopy folded into
+the chest before).
+
 Stages. Start at the top of this list and only move down after the previous one matched:
   check      read-only snapshot: DDS rates, controller kp, loco FSM, palm pose, hands, foreign publishers
   fsm        read-only watch: print loco FSM + controller gains every time they change (work the remote; Ctrl-C)
@@ -136,7 +145,8 @@ parser.add_argument("--palm-y-trim", type=float, default=0.0, help="calibration:
 parser.add_argument("--grasp-height", type=float, default=0.045, help="palm centre above the can base (m); 0.045 wraps the body, 0.055 caught the rim")
 parser.add_argument("--approach-rise", type=float, default=0.03)
 parser.add_argument("--lift", type=float, default=0.14)
-parser.add_argument("--pregrasp-gap", type=float, default=0.08, help="pre-grasp standoff added to --gap (m)")
+parser.add_argument("--pregrasp-gap", type=float, default=0.05, help="pre-grasp standoff added to --gap (m); 0.05 keeps the lateral "
+                    "push to ~5 cm (was 0.08 / 8 cm, live-gated 14 Sep: pregrasp 7 mm, descend 6 mm, fingerprint grasp)")
 # arm controller
 parser.add_argument("--kp", type=float, default=120.0, help="arm PD stiffness sent in rt/arm_sdk (sim: 60 collapsed under the press, 120 held; Unitree teleop runs 300)")
 parser.add_argument("--kd", type=float, default=3.0)
@@ -156,18 +166,18 @@ parser.add_argument("--speed-rung", type=int, default=None, choices=[1, 2, 3, 4,
                     help="arm-motion increment (same planned joints): "
                          "1=1.8x/0.25, 2=1.5x/0.35, 3=1.2x/0.45, 4=1.0x/0.50 Unitree example, "
                          "5=0.85x/0.60, 6=0.70x/0.70, 7=0.55x/0.75 August vmax. "
-                         "Pregrasp/approach/descend/lower stay on --fine-time-scale/--fine-vmax.")
+                         "Approach/descend/lower stay on --fine-time-scale/--fine-vmax; pregrasp uses transit (55 mm up).")
 parser.add_argument("--fine-time-scale", type=float, default=1.5,
-                    help="floor on time-scale for pregrasp/approach/descend/lower (rung 2; never faster than this even at higher rungs)")
+                    help="floor on time-scale for approach/descend/lower (rung 2; never faster than this even at higher rungs)")
 parser.add_argument("--fine-vmax", type=float, default=0.35,
                     help="cap on vmax for those near-can moves (rad/s)")
 parser.add_argument("--no-early-arrive", action="store_true",
                     help="free-space waypoints always dwell the full 1.5 s after the spline (default: done once the joints are within "
-                         "0.02 rad and the palm within 8 mm, >= 0.2 s after the spline; pregrasp always dwells)")
+                         "0.02 rad and the palm within 8 mm, >= 0.2 s after the spline)")
 parser.add_argument("--weight-seconds", type=float, default=3.0, help="arm_sdk weight ramp 0->1 (and back)")
 parser.add_argument("--pos-tol", type=float, default=0.008, help="m: motion counts as arrived below this palm error")
 parser.add_argument("--rot-tol", type=float, default=0.10, help="rad")
-parser.add_argument("--hold", type=float, default=5.0, help="s to hold the can up before lowering")
+parser.add_argument("--hold", type=float, default=1.0, help="s to hold the can up before lowering (--hold 5 for the demo photo)")
 # guards
 parser.add_argument("--torque-frac", type=float, default=0.85, help="freeze if |tau_est| exceeds this fraction of the URDF effort limit for --torque-seconds")
 parser.add_argument("--torque-seconds", type=float, default=0.3)
@@ -196,6 +206,35 @@ parser.add_argument("--look-ymax", type=float, default=0.55, help="m: LOOK depth
 parser.add_argument("--vision", default="http://127.0.0.1:8080", help="g1_vision_stream.py base URL (look reads /color.jpg /depth.f32 /calib.json); '' = open the D435i directly")
 parser.add_argument("--keep", action="store_true", help="handshake/raise: do not park at the end (leave the arm where it is, weight 1)")
 parser.add_argument("--table-x", type=float, default=None, help="near edge of the table (level x, m); default from --look")
+parser.add_argument("--via-step", type=float, default=0.16,
+                    help="m of horizontal reach per table via (0.16 = ~2 vias on these cans; 0.08 was 4-5 stops; 0.12 = ~3). "
+                         "Every interpolant is still checked against the 4 cm palm / 2.5 cm fingertip floors.")
+parser.add_argument("--via-report", action="store_true",
+                    help="offline dryrun: also print the via-merge report (via counts + table margins for 0.08/0.12/0.16 m steps) "
+                         "without taking over the arm; refuse any merged hop under ~20 mm.")
+parser.add_argument("--fluid", action="store_true",
+                    help="one fluid motion to the standoff (through-spline over the via joints, no stops), one merged "
+                         "contact move to the wrap, thumb oppose overlapped with the transit, fluid park home. "
+                         "Raise stays its own proven swing-out; every dense interpolant is still path_check'd. "
+                         "Shorthand for --fluid-transit --merge-contact --overlap-hand --fluid-park.")
+parser.add_argument("--fluid-transit", action="store_true",
+                    help="outbound vias+pregrasp as one joint-space Catmull-Rom spline (v=0 only at the ends), "
+                         "replaying the dryrun joints. Falls back to stepwise if the dense path dips under ~20 mm.")
+parser.add_argument("--merge-contact", action="store_true",
+                    help="one contact spline pregrasp->wrap instead of approach+descend (45 mm wrap is 15 mm above "
+                         "the table freeze floor). Falls back to two moves if the direct hop fails its check.")
+parser.add_argument("--close-at-pregrasp", action="store_true",
+                    help="experiment: skip approach/descend/contact entirely and ramp-close at the standoff "
+                         "(bench offset runs recovered 3-4 cm gaps by dragging the can in). Verdict decides: "
+                         "fingerprint match -> lift as usual; miss -> release, run the contact moves, close again.")
+parser.add_argument("--overlap-hand", action="store_true",
+                    help="start thumb oppose on a side thread during the transit so the 50 Hz arm loop keeps "
+                         "publishing; finger close still waits until the palm is on the can. Answers your thumb question: yes.")
+parser.add_argument("--fluid-park", action="store_true",
+                    help="park home as fluid reverse (retreat->ready in one checked spline, then home) instead of "
+                         "retracing every via with a stop. Never skips to the Cartesian-nearest via.")
+parser.add_argument("--fluid-settle", type=float, default=1.0,
+                    help="s to settle at the standoff after the fluid transit before the contact move (0 = go straight in)")
 parser.add_argument("--offline", action="store_true", help="no robot: dryrun from --offline-q/--offline-rpy with the given can (kinematics only)")
 parser.add_argument("--offline-q", default="0.191,0.148,0.023,1.203,-0.028,-0.014,0.124", help="offline: measured arm q (7, rad)")
 parser.add_argument("--offline-rpy", default="0.2,1.6", help="offline: pelvis roll,pitch (deg)")
@@ -215,6 +254,12 @@ if args.speed_rung is not None:
     if "--vmax" not in sys.argv:
         args.vmax = vm
 
+if args.fluid:
+    args.fluid_transit = True
+    args.merge_contact = True
+    args.overlap_hand = True
+    args.fluid_park = True
+
 if args.arm == "right" and not args.allow_right:
     sys.exit("refusing to drive the right arm without --allow-right")
 SIDE = args.arm
@@ -225,7 +270,7 @@ if args.can_y is None and not args.look:
     args.can_y = -0.12 if SIDE == "right" else 0.12
 DT = 0.02
 T0 = time.monotonic()
-FINE_LABELS = ("pregrasp", "approach", "descend", "lower", "jog")
+FINE_LABELS = ("approach", "descend", "lower", "jog")
 
 
 def clock_for(label, contact=False):
@@ -608,6 +653,107 @@ def spline_clears_table(q0_arm, q1_arm, q_body, R_pL):
     return path_check(q0_arm, q1_arm, q_body, R_pL)
 
 
+def catmull_rom_dense(q_knots_arm, samples_per_seg=24):
+    """Chord-length Catmull-Rom through joint knots (N,7) -> dense (M,7), C1 through intermediate knots, v=0 only at
+    the ends (the global smoothstep time law provides that). End tangents are one-sided so the path leaves the first
+    knot along the first hop. Numpy only (Jetson has no scipy). Two knots -> joint-linear.
+    Samples are distributed across segments in proportion to each hop's joint travel (live 14 Sep: uniform sampling
+    put 1.13 rad in the first third of the path, so the global time stretch underestimated the peak joint rate 1.7x
+    and the arm lagged 44 mm and tripped the table guard; chord-length keeps dq/ds near-uniform so the peak-aware
+    clock holds)."""
+    P = [np.asarray(q, dtype=float) for q in q_knots_arm]
+    n = len(P)
+    if n == 0:
+        return np.zeros((0, 7))
+    if n == 1:
+        return np.array([P[0]])
+    if n == 2:
+        m = max(21, int(math.ceil(float(np.max(np.abs(P[1] - P[0]))) / 0.02) + 1))
+        return np.array([P[0] + (P[1] - P[0]) * (i / float(m - 1)) for i in range(m)])
+    trav = [float(np.max(np.abs(P[i + 1] - P[i]))) for i in range(n - 1)]
+    total = sum(trav) or 1.0
+    budget = samples_per_seg * (n - 1)
+    counts = [max(6, int(round(budget * t / total))) for t in trav]
+    m_tan = [None] * n
+    m_tan[0] = P[1] - P[0]
+    m_tan[-1] = P[-1] - P[-2]
+    for i in range(1, n - 1):
+        m_tan[i] = 0.5 * (P[i + 1] - P[i - 1])
+    dense = []
+    for i in range(n - 1):
+        p0, p1, m0, m1 = P[i], P[i + 1], m_tan[i], m_tan[i + 1]
+        for j in range(counts[i]):
+            t = j / float(counts[i])
+            t2, t3 = t * t, t * t * t
+            h00 = 2 * t3 - 3 * t2 + 1
+            h10 = t3 - 2 * t2 + t
+            h01 = -2 * t3 + 3 * t2
+            h11 = t3 - t2
+            dense.append(h00 * p0 + h10 * m0 + h01 * p1 + h11 * m1)
+    dense.append(P[-1].copy())
+    return np.array(dense)
+
+
+def path_check_dense(q_dense_arm, q_body, R_pL, table=True, from_below=False):
+    """Same floors as path_check but along an explicit dense joint path (the CR through-spline). Returns (ok, why,
+    margin_mm). Margin is the closest palm/fingertip approach to the table slab along the dense samples."""
+    q_dense = np.asarray(q_dense_arm, dtype=float)
+    if q_dense.size == 0:
+        return True, None, None
+    q = np.asarray(q_body, dtype=float).copy()
+    edge = table_edge_x() - 0.03
+    zt = None if CAN.get("z") is None else float(CAN["z"])
+    z_palm_min = None if zt is None else zt + 0.04
+    z_tip_min = None if zt is None else zt + 0.025
+    if from_below and zt is not None:
+        q[ARM] = q_dense[0]
+        _sr, _el, _wr, pp0, R0 = KIN.fk_arm(q)
+        pL0 = R_pL.T @ pp0
+        tip0 = pL0 + 0.08 * (R_pL.T @ R0[:, 0])
+        z_palm_min = min(z_palm_min, float(pL0[2]) - 0.005)
+        z_tip_min = min(z_tip_min, float(tip0[2]) - 0.005)
+    best = float("inf")
+    for i, qd in enumerate(q_dense):
+        q[ARM] = qd
+        sr, el, wr, pp, R = KIN.fk_arm(q)
+        why = _body_violation(sr, el, wr, pp, R, R_pL)
+        if why is not None:
+            return False, "dense sample %d/%d: %s" % (i, len(q_dense) - 1, why), None
+        pL = R_pL.T @ pp
+        tip = pL + 0.08 * (R_pL.T @ R[:, 0])
+        if zt is not None:
+            for pt, r in ((pL, 0.025), (tip, 0.015)):
+                d = math.sqrt(max(0.0, edge - pt[0]) ** 2 + max(0.0, pt[2] - zt) ** 2) - r
+                best = min(best, max(0.0, d))
+        if table and zt is not None:
+            if pL[0] > edge and pL[2] < z_palm_min:
+                return False, "dense sample %d/%d: palm dips to z_L %.3f at x=%.2f (table %.3f)" % (i, len(q_dense) - 1, pL[2], pL[0], zt), None
+            if tip[0] > edge and tip[2] < z_tip_min:
+                return False, "dense sample %d/%d: fingertips dip to z_L %.3f at x=%.2f (table %.3f)" % (i, len(q_dense) - 1, tip[2], tip[0], zt), None
+    mm = None if zt is None or best == float("inf") else round(best * 1000)
+    return True, None, mm
+
+
+def fluid_transit_knots(include_pregrasp=False):
+    """Dryrun knot list for the fluid outbound: [ready/fold, via...] arm joints + names (plus pregrasp when asked).
+    Default EXCLUDES pregrasp: live runs showed the tail (hover->standoff, 20-25 mm over the floor) plus accumulated
+    tracking lag trips the guard, while the high traverse (40-50 mm) is tolerant. So fluid flies to the last high
+    via and a short posture-corrected hop finishes to the standoff (proven 5 mm). None if no plan."""
+    chain = []
+    for s in PLAN["order"]:
+        if plan_stage_of(s) == "raise" or s.startswith("via") or (s == "pregrasp" and include_pregrasp):
+            if s in PLAN["steps"] and PLAN["steps"][s].get("ok"):
+                chain.append(s)
+    # keep only the tail from the last raise/fold (the outbound transit), not earlier scraps
+    last_raise = max([i for i, s in enumerate(chain) if plan_stage_of(s) == "raise"], default=None)
+    if last_raise is not None:
+        chain = chain[last_raise:]
+    if len(chain) < 2:
+        return [], []
+    qs = [np.asarray(PLAN["steps"][s]["q"][ARM], dtype=float) for s in chain]
+    return chain, qs
+
+
 def find_hip_reach_q(q_body, R_pL, R_des, q_attract):
     """Best ready config (see find_hip_reach_candidates) or (None, None, None)."""
     c = find_hip_reach_candidates(q_body, R_pL, R_des, q_attract)
@@ -799,6 +945,7 @@ class ArmSdk(threading.Thread):
         self.q_attract = None
         self.q_safe = None         # last arm command while the palm was above the table
         self.allow_dip = False     # park-lift may start from a pose already below the freeze line
+        self.park_done = False    # park() already ran this session; finish_arm must not drop weight again
         self.q_home = None         # park target when it is not the takeover pose (recover: the original hang pose)
         self.ierr = np.zeros(7)    # gravity-sag compensation: bounded integral of the joint error, learned while holding
         self.mode_machine = 0
@@ -914,9 +1061,9 @@ class ArmSdk(threading.Thread):
         ts, vm, fine = clock_for(label, contact)
         T_eff = max(0.3, T * ts, 1.57 * dq_max / (0.8 * vm))
         self.progress = {"best": None, "t": now()}
-        # free-space waypoints may finish as soon as the joints are on the plan (see tick); pregrasp keeps the full
-        # dwell so the sag integral has settled right before the contact moves
-        early = (not contact) and (not args.no_early_arrive) and label != "pregrasp"
+        # free-space waypoints may finish as soon as the joints are on the plan (see tick); the 1.5 s dwell was for
+        # the sag integral, which is carried into the next spline as ierr feed-forward, so pregrasp uses it too
+        early = (not contact) and (not args.no_early_arrive)
         self.motion = dict(kind="joint", q0=q0, q1=q1, T=T_eff, t0=now(), label=label, done=False,
                            contact=contact, cmd_a1=None, p0=p0, p1=p1, R1=R1, early=early, vmax=vm)
         log("MOVE %s: joint spline palm %s -> %s (pelvis), %.1fs%s, dq_max %.2f rad, %s %.1f mm / %.1f deg%s | q1 %s" % (
@@ -926,6 +1073,94 @@ class ArmSdk(threading.Thread):
             (", contact/fine" if fine else ""), np.round(q1, 2).tolist()))
         if ep > 0.02 or er > 0.15:
             log("MOVE %s: weak IK (%.1f mm / %.1f deg) - check the goal / can estimate" % (label, ep * 1000, math.degrees(er)))
+        return True
+
+    def start_path_motion(self, q_knots_arm, T_base, label, contact, goal_L, R_goal, table=True, min_margin=25):
+        """One fluid joint-space motion through dryrun knots (Catmull-Rom, v=0 only at the ends). Same guards,
+        windup, vmax, ierr and arrival logic as a joint spline (tick shares the code; q_des is a dense lookup).
+        Live knots are [current, ...plan[1:]] with a small end-correction ramp for the standing lean; the dense path
+        is re-checked before starting and falls back to stepwise on refusal. Raise is never part of this path."""
+        st = state()
+        p0, _R0 = self.palm_now(st)
+        g_L = np.asarray(goal_L, dtype=float)
+        p1 = self.R_pL @ g_L
+        R1 = self.R_pL @ R_goal if R_goal is not None else _R0
+        q0_nom = self.cmd[ARM].copy() - self.ierr
+        q_seed = st["q"].copy()
+        q_seed[ARM] = q0_nom
+        knots = [np.asarray(q, dtype=float) for q in q_knots_arm]
+        if not knots:
+            return False
+        # anchor the start at the current nominal command so there is no jump; keep the plan shape after it
+        live_knots = [q0_nom] + knots[1:] if len(knots) > 1 else [q0_nom, knots[0]]
+        # small end-correction for the standing lean (same basin only): solve the level goal from the planned end,
+        # ramp the delta across the path so the start is unchanged. No live pullback beyond 0.6 rad / 10 mm.
+        dq_end = np.zeros(7)
+        if True:
+            q_plan_end = np.asarray(knots[-1], dtype=float)
+            q_est = q_seed.copy()
+            q_est[ARM] = q_plan_end
+            picked = None
+            for dz in (0.0, -0.02, -0.04, 0.03):
+                if dz != 0.0 and CAN.get("z") is not None and g_L[2] + dz < float(CAN["z"]) + 0.045:
+                    continue
+                g_p = self.R_pL @ (g_L + np.array([0.0, 0.0, dz]))
+                q_corr, ep_c, er_c = KIN.ik(q_est.copy(), g_p, R1, iters=120)
+                dq_c = float(np.max(np.abs(q_corr[ARM] - q_plan_end)))
+                if ep_c < 0.01 and er_c < 0.15 and dq_c < 0.6:
+                    picked = (dz, q_corr, ep_c, er_c, dq_c)
+                    break
+            if picked is not None:
+                dz, q_corr, ep_c, er_c, dq_c = picked
+                dq_end = q_corr[ARM] - q_plan_end
+                if float(np.max(np.abs(dq_end))) > 1e-4:
+                    log("MOVE %s: path end-correction dq %.2f rad%s (lean, same basin)" % (
+                        label, float(np.max(np.abs(dq_end))), "" if dz == 0.0 else " with waypoint %+.0f cm" % (dz * 100)))
+                ep = ep_c
+                er = er_c
+            else:
+                log("MOVE %s: path end-correction rejected - following dryrun joints (%.0f mm off level goal)" % (
+                    label, float(np.linalg.norm(p1 - KIN.fk(q_est)[0])) * 1000))
+                ep = er = 0.0
+        dense_nom = catmull_rom_dense(live_knots)
+        # fade the end correction in late (w = s^2): the mid-path keeps the dryrun-verified shape (live 14 Sep: a
+        # linear ramp reshaped the middle of the spline where the margin is thinnest), full correction only at the end
+        M = len(dense_nom)
+        if M > 1:
+            s = np.array([i / float(M - 1) for i in range(M)])
+            dense = np.array([dense_nom[i] + (s[i] ** 2) * dq_end for i in range(M)])
+        else:
+            dense = dense_nom
+        dense = np.minimum(np.maximum(dense, KIN.lo[ARM] + 0.03), KIN.hi[ARM] - 0.03)
+        ok_path, why, mm = path_check_dense(dense, q_seed, self.R_pL, table=table, from_below=self.allow_dip)
+        if not ok_path:
+            log("MOVE %s: refusing fluid path (%s) - falling back to stepwise" % (label, why))
+            return False
+        if table and mm is not None and min_margin is not None and mm < min_margin:
+            log("MOVE %s: refusing fluid path (table margin %s mm < %d) - falling back to stepwise" % (label, mm, min_margin))
+            return False
+        if not contact:
+            # free-space end accuracy gate, same as a joint spline (40 mm refuses, 25 mm warns)
+            if ep > 0.025:
+                log("MOVE %s: end IK rest %.1f mm - too weak for a free-space table move, not starting" % (label, ep * 1000))
+                return False
+        self.q_nom = q0_nom.copy()
+        plen = float(np.max(np.sum(np.abs(np.diff(dense, axis=0)), axis=0))) if M > 1 else 0.0
+        ts, vm, fine = clock_for(label, contact)
+        # 1.2x headroom on the path-length stretch: the per-tick vmax clip must never sustain against the command
+        # (live 14 Sep: an exact stretch lagged 44 mm and tripped the table guard; chord-length sampling keeps the
+        # peak joint rate near the average so this headroom holds tracking inside the early-arrive band)
+        T_eff = max(0.3, T_base * ts, 1.57 * plen / (0.8 * vm) * 1.2)
+        self.progress = {"best": None, "t": now()}
+        early = (not contact) and (not args.no_early_arrive)
+        self.motion = dict(kind="path", dense=dense, q0=dense[0].copy(), q1=dense[-1].copy(), T=T_eff, t0=now(),
+                           label=label, done=False, contact=contact, cmd_a1=None, p0=p0, p1=p1, R1=R1,
+                           early=early, vmax=vm)
+        log("MOVE %s: fluid path %d knots -> %d samples, palm %s -> %s (pelvis), %.1fs%s, path %.2f rad, margin %s mm%s | q1 %s" % (
+            label, len(live_knots), M, np.round(p0, 3).tolist(), np.round(p1, 3).tolist(), T_eff,
+            " (stretched for vmax %.2f)" % vm if T_eff > T_base * ts + 1e-6 else "",
+            plen, "?" if mm is None else mm, (", contact/fine" if fine else ""),
+            np.round(dense[-1], 2).tolist()))
         return True
 
     def start_joint_motion(self, q_goal_arm, T, label):
@@ -1010,8 +1245,18 @@ class ArmSdk(threading.Thread):
                 self.weight = m["w0"] + (m["w1"] - m["w0"]) * a
                 if a >= 1.0:
                     m["done"] = True
-            elif m["kind"] == "joint":
-                q_des = m["q0"] + (m["q1"] - m["q0"]) * a
+            elif m["kind"] in ("joint", "path"):
+                if m["kind"] == "joint":
+                    q_des = m["q0"] + (m["q1"] - m["q0"]) * a
+                else:
+                    dense = m["dense"]
+                    K = len(dense)
+                    f = a * (K - 1)
+                    i0 = int(math.floor(f))
+                    i0 = max(0, min(K - 1, i0))
+                    i1 = min(K - 1, i0 + 1)
+                    fr = f - i0
+                    q_des = dense[i0] * (1.0 - fr) + dense[i1] * fr
                 palm_planned = m.get("p1") is not None
                 if palm_planned and not m.get("contact") and st is not None and a >= 1.0:
                     # kp 120 sags ~0.03 rad/joint with the arm out (4 cm at the palm; via-mid3 was frozen as "blocked"
@@ -1041,13 +1286,21 @@ class ArmSdk(threading.Thread):
                     self.freeze("joint move %s blocked: %.2f rad short of the target %.1fs after its end" % (m["label"], lag, t - m["t0"] - m["T"]))
                     return
                 if st is not None and not m.get("contact") and CAN.get("z") is not None:
-                    p_guard, _ = KIN.fk(st["q"])
+                    p_guard, R_guard = KIN.fk(st["q"])
                     p_Lv = self.R_pL.T @ p_guard
-                    if float(p_Lv[0]) <= table_edge_x() - 0.03 or float(p_Lv[2]) >= float(CAN["z"]) + 0.05:
+                    tip_Lv = p_Lv + 0.08 * (self.R_pL.T @ R_guard[:, 0])
+                    edge = table_edge_x()
+                    zt = float(CAN["z"])
+                    palm_clear = float(p_Lv[0]) <= edge - 0.03 or float(p_Lv[2]) >= zt + 0.05
+                    tip_clear = float(tip_Lv[0]) <= edge - 0.03 or float(tip_Lv[2]) >= zt + 0.025
+                    if palm_clear and tip_clear:
                         self.q_safe = self.cmd[ARM].copy()
-                    elif not self.allow_dip and float(p_Lv[0]) > table_edge_x() and float(p_Lv[2]) < float(CAN["z"]) + 0.02:
+                    elif not self.allow_dip and float(p_Lv[0]) > edge and float(p_Lv[2]) < zt + 0.02:
                         self.freeze("palm z_L %.3f is below the table %.3f at x=%.2f (hitting the table?)" % (
                             p_Lv[2], CAN["z"], p_Lv[0]))
+                    elif not self.allow_dip and float(tip_Lv[0]) > edge and float(tip_Lv[2]) < zt + 0.015:
+                        self.freeze("fingertips z_L %.3f are below the table %.3f at x=%.2f (hitting the counter?)" % (
+                            tip_Lv[2], CAN["z"], tip_Lv[0]))
                 if palm_planned and st is not None and self.frozen is None:
                     p_cur, R_cur = KIN.fk(st["q"])
                     q_fk = st["q"].copy()
@@ -1058,11 +1311,21 @@ class ArmSdk(threading.Thread):
                     self.last_err = (err, rot_err)
                     if (not m.get("contact") and p_cur is not None):
                         p_Lv = self.R_pL.T @ p_cur
-                        if CAN.get("z") is None or float(p_Lv[0]) <= table_edge_x() - 0.03 or float(p_Lv[2]) >= float(CAN["z"]) + 0.05:
+                        tip_Lv = p_Lv + 0.08 * (self.R_pL.T @ R_cur[:, 0])
+                        if CAN.get("z") is None:
                             self.q_safe = self.cmd[ARM].copy()
+                        else:
+                            edge, zt = table_edge_x(), float(CAN["z"])
+                            palm_clear = float(p_Lv[0]) <= edge - 0.03 or float(p_Lv[2]) >= zt + 0.05
+                            tip_clear = float(tip_Lv[0]) <= edge - 0.03 or float(tip_Lv[2]) >= zt + 0.025
+                            if palm_clear and tip_clear:
+                                self.q_safe = self.cmd[ARM].copy()
                         if CAN.get("z") is not None and p_Lv[0] > table_edge_x() and abs(p_Lv[1]) < 0.45 and p_Lv[2] < CAN["z"] - 0.02:
                             self.freeze("palm z_L %.3f is below the table %.3f at x=%.2f (hitting the table?)" % (
                                 p_Lv[2], CAN["z"], p_Lv[0]))
+                        elif CAN.get("z") is not None and not self.allow_dip and tip_Lv[0] > table_edge_x() and abs(tip_Lv[1]) < 0.45 and tip_Lv[2] < float(CAN["z"]) + 0.01:
+                            self.freeze("fingertips z_L %.3f are below the table %.3f at x=%.2f (hitting the counter?)" % (
+                                tip_Lv[2], CAN["z"], tip_Lv[0]))
                         elif m.get("p0") is not None and m.get("p1") is not None:
                             z0 = float((self.R_pL.T @ m["p0"])[2])
                             z1 = float((self.R_pL.T @ m["p1"])[2])
@@ -1349,6 +1612,55 @@ def run_hand(stage, extra):
             return json.load(f)
     except Exception:  # noqa: BLE001
         return None
+
+
+def run_hand_async(stage, extra):
+    """Start revo2_hand_test.py on a side thread (for --overlap-hand: thumb oppose rides along with the arm transit
+    while the 50 Hz arm loop keeps publishing the hold). Returns a holder dict(thread, rc, doc); join with
+    wait_hand_async(). The hand uses rt/brainco/*, the arm uses rt/arm_sdk - different topics, no DDS conflict."""
+    holder = dict(thread=None, rc=None, doc=None, stage=stage, done=False)
+    if args.no_hand:
+        log("HAND %s skipped (--no-hand)" % stage)
+        holder["done"] = True
+        return holder
+
+    def _run():
+        global HAND_LAST_RC
+        out = out_path()[:-5] + "-hand-%s.json" % stage
+        cmd = [sys.executable, args.hand_tool, "--hand", SIDE, "--stage", stage, "--iface", args.iface,
+               "--mode", "ramp", "--out", out] + extra
+        if SIDE == "right":
+            cmd.append("--allow-right")
+        log("HAND %s (background): %s" % (stage, " ".join(cmd[1:])))
+        rc = subprocess.call(cmd)
+        doc = None
+        try:
+            with open(out) as f:
+                doc = json.load(f)
+        except Exception:  # noqa: BLE001
+            doc = None
+        holder["rc"] = rc
+        holder["doc"] = doc
+        holder["done"] = True
+        HAND_LAST_RC = rc
+        log("HAND %s (background) exit %d" % (stage, rc))
+
+    th = threading.Thread(target=_run, daemon=True)
+    holder["thread"] = th
+    th.start()
+    return holder
+
+
+def wait_hand_async(holder, timeout=None):
+    """Join a run_hand_async holder; returns (rc, doc). rc 0 = ok, None = --no-hand skip."""
+    if holder.get("thread") is None:
+        return holder.get("rc"), holder.get("doc")
+    holder["thread"].join(timeout=timeout)
+    if holder["thread"].is_alive():
+        log("HAND %s (background): still running after %.0fs - arm holds while it finishes" % (
+            holder.get("stage"), timeout or 0))
+        holder["thread"].join()
+    return holder.get("rc"), holder.get("doc")
 
 
 def hand_q_now():
@@ -1786,7 +2098,8 @@ def _pregrasp_ik_mm(xy, z, q, R_pL):
 
 
 def _pick_can(scored, z_table, st, R_pL):
-    """Pick a 12 oz can in view. Rank by whether this arm can IK a pregrasp, then by blob score.
+    """Pick a 12 oz can in view. Rank by whether this arm can IK a pregrasp (5 mm bins, so 0.6 vs 1.2 mm
+    does not steal a better blob), then this arm's side of the midline, then blob score.
     No hardcoded x/y — the camera says where the can is; dryrun still refuses an unreachable pose."""
     pool = [c for c in scored if c.get("ident") != "can-like" and c.get("score", 0) >= 0.08]
     if not pool:
@@ -1797,10 +2110,13 @@ def _pick_can(scored, z_table, st, R_pL):
     ranked = []
     for c in pool:
         mm = _pregrasp_ik_mm(c["xy"], z_table, q, R_pL)
-        log("  reach %s xy=(%.3f, %.3f)  pregrasp IK %.0f mm" % (c["ident"], c["xy"][0], c["xy"][1], mm))
-        ranked.append((mm, -float(c["score"]), c))
+        y = float(c["xy"][1])
+        far = 1 if (SIDE == "left" and y < -0.05) or (SIDE == "right" and y > 0.05) else 0
+        log("  reach %s xy=(%.3f, %.3f)  pregrasp IK %.0f mm%s" % (
+            c["ident"], c["xy"][0], y, mm, " (other side)" if far else ""))
+        ranked.append((int(mm // 5), far, -float(c["score"]), c))
     ranked.sort()
-    return ranked[0][2]
+    return ranked[0][3]
 
 
 def do_look(info):
@@ -2216,6 +2532,57 @@ def plan_is_current():
     return c is not None and all(CAN.get(k) is not None and abs(float(CAN[k]) - float(c[k])) < 0.0015 for k in ("x", "y", "z"))
 
 
+def via_merge_report(q_body, R_pL):
+    """Offline via-merge proof (--via-report): for the executed ready->pregrasp chain, print per-hop table margins
+    plus what coarser/finer steps would have produced. Refuse any merged hop under ~20 mm (live 22:27 vias were
+    31-58 mm; keep the extra via instead of inventing a live pullback). Stored in SUMMARY['via_report']."""
+    chain = [s for s in PLAN["order"] if s.startswith("via") or s == "pregrasp"]
+    if not chain:
+        log("VIA-REPORT: no table vias in this plan (short reach) - nothing to merge")
+        SUMMARY["via_report"] = dict(chain=[], verdict="no vias")
+        return
+    qs = {n: np.asarray(PLAN["steps"][n]["q"][ARM], dtype=float) for n in chain}
+    # include the hop into the first via (from raise/fold) so a ready->pregrasp chord is judged too
+    prev_name = None
+    for cand in reversed(PLAN["order"][:PLAN["order"].index(chain[0])]):
+        if cand in PLAN["steps"]:
+            prev_name = cand
+            break
+    q_prev0 = np.asarray(PLAN["steps"][prev_name]["q"][ARM], dtype=float) if prev_name else None
+    rows = []
+    ok_all = True
+    order = ([prev_name] if prev_name else []) + chain
+    qmap = dict(qs)
+    if prev_name:
+        qmap[prev_name] = q_prev0
+    for a, b in zip(order[:-1], order[1:]):
+        tm = path_table_margin(qmap[a], qmap[b], q_body, R_pL)
+        ok, why = path_check(qmap[a], qmap[b], q_body, R_pL)
+        mm = None if tm is None else round(tm * 1000)
+        good = bool(ok) and (mm is None or mm >= 20)
+        ok_all &= good
+        rows.append(dict(hop="%s->%s" % (a, b), table_margin_mm=mm, ok=good, why=why))
+        log("VIA-REPORT hop %-22s table margin %s mm -> %s%s" % (
+            "%s->%s" % (a, b), "?" if mm is None else "%.0f" % mm, "OK" if good else "REFUSE",
+            "" if ok else " (%s)" % why))
+    # geometric counts for the ready->pregrasp reach at each candidate step
+    try:
+        g0 = np.asarray(PLAN["steps"][order[0]]["goal_L"] if order[0] in PLAN["steps"] else PLAN["steps"][chain[0]]["goal_L"])
+        g1 = np.asarray(PLAN["steps"]["pregrasp"]["goal_L"])
+        horiz = float(np.linalg.norm(g1[:2] - g0[:2]))
+        counts = {s: max(1, int(math.ceil(horiz / s))) for s in (0.08, 0.12, 0.16)}
+        log("VIA-REPORT reach %.1f cm: 8 cm -> %d hops, 12 cm -> %d hops, 16 cm -> %d hops (this plan: %d)" % (
+            horiz * 100, counts[0.08], counts[0.12], counts[0.16], len(chain)))
+    except Exception:
+        counts = {}
+        horiz = None
+    verdict = "OK: every hop >= 20 mm, safe for live --until pregrasp" if ok_all else \
+        "REFUSE: a hop is under ~20 mm - keep the extra via, do not merge further"
+    log("VIA-REPORT verdict: %s" % verdict)
+    SUMMARY["via_report"] = dict(chain=chain, hops=rows, counts=counts,
+                                 horiz_m=horiz, verdict=verdict, via_step=float(args.via_step))
+
+
 def do_dryrun(info):
     st = state()
     R_pL = rpy_to_mat(float(st["rpy"][0]), float(st["rpy"][1]), 0.0).T
@@ -2351,22 +2718,73 @@ def do_dryrun(info):
                                    table_margin=tm)
         q_prev = q.copy()
     SUMMARY["dryrun"] = dict(can=dict(CAN), pelvis_height=args.pelvis_height or info["pelvis_height_est"], stages=report, reachable=bool(ok_all),
-                             mode=mode, table_x=table_edge_x())
+                             mode=mode, table_x=table_edge_x(), via_step=float(args.via_step),
+                             fine_labels=list(FINE_LABELS), hold_default=float(args.hold))
     if ok_all:
-        log("DRYRUN OK (%s): every interpolant clears the table and the body; the live stages replay exactly these joints" % mode)
+        log("DRYRUN OK (%s, via-step %.2f m, %d table hop(s)): every interpolant clears the table and the body; the live stages replay exactly these joints" % (
+            mode, float(args.via_step), len([r for r in report if r["stage"].startswith("via")])))
     else:
         bad = [r["stage"] for r in report if not r["ok"] and (r["stage"] in required or r["stage"] == "fold" or r["stage"].startswith("via"))]
         log("DRYRUN NOT OK (%s): %s failed (table z_L=%s)." % (
             mode, ", ".join(bad) if bad else "path", "?" if CAN.get("z") is None else "%.3f" % CAN["z"]))
+    if args.fluid_transit or args.merge_contact or args.fluid_park or args.fluid:
+        verify_fluid_plan(q0, R_pL)
+    if args.via_report:
+        via_merge_report(q0, R_pL)
     return ok_all
+
+
+def verify_fluid_plan(q_body, R_pL):
+    """Offline proof for the fluid options (no motion). Checks the CR through-spline over the dryrun transit knots
+    and the merged pregrasp->wrap contact hop with the same floors. Transit refuses under 25 mm (live 14 Sep dipped
+    1 mm under the guard from a 26 mm live prediction, so fluid keeps a fatter gate than stepwise's 20); live falls
+    back to stepwise on any refusal."""
+    out = {}
+    names, qs = fluid_transit_knots()
+    if len(names) >= 2 and (args.fluid_transit or args.fluid_park or args.fluid):
+        dense = catmull_rom_dense(qs)
+        ok, why, mm = path_check_dense(dense, q_body, R_pL, table=True)
+        good = bool(ok) and (mm is None or mm >= 25)
+        # timing preview: total joint length vs vmax, same clock as live start_path_motion (with its 1.2x headroom)
+        ts, vm, _ = clock_for("via-hover", False)
+        plen = float(np.max(np.sum(np.abs(np.diff(dense, axis=0)), axis=0))) if len(dense) > 1 else 0.0
+        base = sum(float(PLAN["steps"][s].get("T", 2.5)) for s in names) * 0.6
+        T_preview = max(1.2, base * ts, 1.57 * plen / (0.8 * vm) * 1.2) if plen > 0 else base * ts
+        log("FLUID-TRANSIT %s: %d knots -> %d dense samples, margin %s mm, path %.2f rad, T ~%.1fs -> %s%s" % (
+            "->".join(names), len(names), len(dense), "?" if mm is None else mm, plen, T_preview,
+            "OK" if good else "REFUSE", "" if ok else " (%s)" % why))
+        out["transit"] = dict(knots=names, samples=int(len(dense)), margin_mm=mm, path_rad=round(plen, 3),
+                              T_preview_s=round(T_preview, 2), ok=bool(good), why=why)
+    if args.merge_contact or args.fluid:
+        if "pregrasp" in PLAN["steps"] and "descend" in PLAN["steps"] and PLAN["steps"]["pregrasp"].get("ok") and PLAN["steps"]["descend"].get("ok"):
+            qp = np.asarray(PLAN["steps"]["pregrasp"]["q"][ARM], dtype=float)
+            qd = np.asarray(PLAN["steps"]["descend"]["q"][ARM], dtype=float)
+            # merged contact must still clear the fingertip floor on the way in (approach-rise no longer earns safety)
+            ok, why = path_check(qp, qd, q_body, R_pL, table=True)
+            tm = path_table_margin(qp, qd, q_body, R_pL)
+            mm = None if tm is None else round(tm * 1000)
+            good = bool(ok) and (mm is None or mm >= 20)
+            log("MERGED-CONTACT pregrasp->descend: dq %.2f rad, margin %s mm -> %s%s" % (
+                float(np.max(np.abs(qd - qp))), "?" if mm is None else mm, "OK" if good else "KEEP TWO MOVES",
+                "" if ok else " (%s)" % why))
+            out["contact"] = dict(dq_max=round(float(np.max(np.abs(qd - qp))), 3), margin_mm=mm, ok=bool(good), why=why)
+        else:
+            log("MERGED-CONTACT: pregrasp/descend not both OK - keeping approach+descend")
+            out["contact"] = dict(ok=False, why="pregrasp/descend not OK")
+    if out:
+        SUMMARY["fluid"] = out
 
 
 # ----------------------------------------------------------------------------------------------------------------------
 # motion stages
 # ----------------------------------------------------------------------------------------------------------------------
 def finish_arm():
-    """End the session: park if frozen, but never drop weight while the palm is in the table."""
+    """End the session: park if frozen, but never drop weight while the palm is in the table.
+    If park() already ran, it either released or decided to hold — do not drop weight a second time
+    (that is how a refused home interpolant still got weight 0 with the fingers on the counter)."""
     if ARMSDK.cmd is None or ARMSDK.weight <= 0.0 or args.keep:
+        return
+    if ARMSDK.park_done:
         return
     st = state()
     p_L = None
@@ -2454,15 +2872,30 @@ def palm_in_table(p_L):
 def park():
     """slow return, weight -> 0 at the end. With an executed plan: retrace its waypoints backwards (every interpolant
     was verified forwards), then the joint-space home. Without one: get off the table first, retract, then home.
-    Never releases weight while the palm is still in the counter."""
+    Never releases weight while the palm is still in the counter.
+    Fluid reverse is checked with the same 4 cm / 2.5 cm floors as outbound (allow_dip stays off for that
+    spline). allow_dip is only for the later stepwise lift if we are already below the freeze line."""
     if ARMSDK.cmd is None:
         return
+    ARMSDK.park_done = True
     if ARMSDK.frozen:
         ARMSDK.unfreeze("park")
-    ARMSDK.allow_dip = True
+    ARMSDK.allow_dip = False
     st = state()
     ARMSDK.set_level(st)
     ARMSDK.cmd[ARM] = st["q"][ARM]
+    if args.fluid_park and plan_is_current():
+        log("PARK: trying fluid reverse (one checked spline to ready, then home) - falls back to stepwise")
+        if fluid_park_home() and not ARMSDK.frozen:
+            st = state()
+            ARMSDK.cmd[ARM] = st["q"][ARM]
+        else:
+            log("PARK: fluid reverse refused - stepwise retrace")
+            if ARMSDK.frozen:
+                ARMSDK.unfreeze("park-fluid-fallback")
+                st = state()
+                ARMSDK.cmd[ARM] = st["q"][ARM]
+    ARMSDK.allow_dip = True
     done = [s for s in PLAN.get("done", []) if s in PLAN["steps"]]
     # Only the transit waypoints are a way home: raise/fold and the table vias (clearance height, verified interpolants).
     # pregrasp/approach/descend/lift/lower are the excursion at the can - cycle 3's park retraced lower -> lift ->
@@ -2481,13 +2914,17 @@ def park():
             s = PLAN["steps"][name]
             ok_step = _move_palm_once("park-" + name, s["goal_L"], max(1.5, s.get("T", 2.5)), R_PALM_DES, False, q_plan=s["q"])
             if not ok_step and not ARMSDK.frozen:
-                # refused (path would brush the table from here): lift 6 cm at the current xy, then try once more
-                p_c, _ = KIN.fk(state()["q"])
-                p_cL = ARMSDK.R_pL.T @ p_c
-                log("PARK: %s refused from here - lifting 6 cm at the current xy first, then retrying" % name)
+                # refused (path would brush the table from here): climb straight up at the current xy (checked
+                # IK hops, safest direction) and retry the waypoint after each lift, up to 3 times
                 ARMSDK.q_attract = None
-                if _move_palm_once("park-lift", np.array([p_cL[0], p_cL[1], p_cL[2] + 0.06]), 2.5, None, False) and not ARMSDK.frozen:
-                    ok_step = _move_palm_once("park-" + name, s["goal_L"], max(1.5, s.get("T", 2.5)), R_PALM_DES, False, q_plan=s["q"])
+                for _lift in range(3):
+                    if ok_step or ARMSDK.frozen:
+                        break
+                    p_c, _ = KIN.fk(state()["q"])
+                    p_cL = ARMSDK.R_pL.T @ p_c
+                    log("PARK: %s refused from here - lifting 6 cm at the current xy first, then retrying (try %d/3)" % (name, _lift + 1))
+                    if _move_palm_once("park-lift", np.array([p_cL[0], p_cL[1], p_cL[2] + 0.06]), 2.5, None, False) and not ARMSDK.frozen:
+                        ok_step = _move_palm_once("park-" + name, s["goal_L"], max(1.5, s.get("T", 2.5)), R_PALM_DES, False, q_plan=s["q"])
             if not ok_step:
                 if ARMSDK.frozen:
                     log("PARK: retrace to %s froze (%s) - holding with weight 1. Enter at the prompt retries, L2+B if wedged." % (name, ARMSDK.frozen))
@@ -2562,10 +2999,13 @@ def palm_clearance_z():
     return float(CAN["z"]) + float(args.clearance)
 
 
-def plan_table_vias(p_from_L, p_to_L, q_seed=None, R_pL=None, R_des=None, quiet=False):
+def plan_table_vias(p_from_L, p_to_L, q_seed=None, R_pL=None, R_des=None, quiet=False, via_step=None):
     """short xy steps at table-clearance height: [(label, palm_level, q29 or None), ...]. With q_seed/R_pL/R_des each
-    via is solved (attracted to the previous one) and its interpolant checked; unreachable vias are dropped."""
+    via is solved (attracted to the previous one) and its interpolant checked; unreachable vias are dropped.
+    via_step (m per hop, default --via-step 0.16): 0.08 was 4-5 stops, 0.16 is ~2. Every interpolant is still
+    checked against the 4 cm palm / 2.5 cm fingertip floors by path_check."""
     _log = (lambda *a, **k: None) if quiet else log
+    step = float(via_step) if via_step is not None else float(args.via_step)
     p_from_L = np.asarray(p_from_L, dtype=float)
     p_to_L = np.asarray(p_to_L, dtype=float)
     zc = palm_clearance_z()
@@ -2576,7 +3016,7 @@ def plan_table_vias(p_from_L, p_to_L, q_seed=None, R_pL=None, R_des=None, quiet=
     z_lo = float(CAN["z"]) + 0.03
     z_hi = z_transit + 0.03
     vias = []
-    n = max(1, int(math.ceil(horiz / 0.08)))
+    n = max(1, int(math.ceil(horiz / step)))
     for i in range(1, n + 1):
         a = i / float(n)
         xy = (1.0 - a) * p_from_L[:2] + a * p_to_L[:2]
@@ -2659,6 +3099,136 @@ def _move_joint_once(label, q_arm, T):
                                                np.round(p_L, 3).tolist(), np.round(st["tau"][ARM], 2).tolist()))
     grab_still(label)
     return ok and ARMSDK.frozen is None
+
+
+def _move_path_once(label, q_knots_arm, T_base, goal_L, R_goal, contact, table=True, done_names=None, min_margin=25):
+    """One fluid motion through dryrun knots (see start_path_motion). On success marks done_names in PLAN done
+    (so park can reverse the same joints) and records SUMMARY. Returns False on refusal/freeze (caller falls back).
+    min_margin 25 for free-space fluid; None skips the number gate (merged contact: floors-checked, endpoint capped)."""
+    if ARMSDK.frozen and not ARMSDK.allow_dip:
+        return False
+    ARMSDK.set_level(state())
+    started = ARMSDK.start_path_motion(q_knots_arm, T_base, label, contact,
+                                       np.asarray(goal_L, dtype=float),
+                                       R_PALM_DES if R_goal is None else R_goal, table=table, min_margin=min_margin)
+    if not started:
+        log("%s: fluid path refused - falling back to stepwise" % label.upper())
+        return False
+    ok = ARMSDK.wait()
+    st = state()
+    p, _R = KIN.fk(st["q"])
+    p_L = ARMSDK.R_pL.T @ p
+    SUMMARY["stages"][label] = dict(goal_level=np.round(np.asarray(goal_L, dtype=float), 4).tolist(),
+                                    palm_level=np.round(p_L, 4).tolist(),
+                                    err_mm=round(float(np.linalg.norm(p_L - np.asarray(goal_L))) * 1000, 1),
+                                    q=st["q"][ARM].round(4).tolist(), tau=st["tau"][ARM].round(2).tolist(),
+                                    frozen=ARMSDK.frozen, fluid=True,
+                                    knots=[np.round(np.asarray(q, dtype=float), 4).tolist() for q in q_knots_arm])
+    log("%s: palm (level) %s vs goal %s -> %.1f mm | tau %s" % (label.upper(), np.round(p_L, 3).tolist(),
+                                                               np.round(np.asarray(goal_L, dtype=float), 3).tolist(),
+                                                               SUMMARY["stages"][label]["err_mm"],
+                                                               SUMMARY["stages"][label]["tau"]))
+    grab_still(label)
+    if ok and ARMSDK.frozen is None and done_names:
+        for n in done_names:
+            if n in PLAN["steps"] and n not in PLAN["done"]:
+                PLAN["done"].append(n)
+    return ok and ARMSDK.frozen is None
+
+
+def fluid_outbound(R_goal):
+    """One fluid motion over the table: CR through the HIGH transit knots [ready/fold, via...] (pregrasp excluded),
+    no stops. The low tail (last via -> standoff, 20-25 mm over the floor) stays a short posture-corrected hop: live
+    runs showed tracking lag accumulates along the spline exactly where the margin is thinnest. Raise stays separate
+    (hang vs reach homotopy). Returns True on success, False to fall back to stepwise."""
+    names, qs = fluid_transit_knots(include_pregrasp=False)
+    if len(names) < 2:
+        log("FLUID-OUT: no transit chain in plan - stepwise")
+        return False
+    if not plan_is_current():
+        log("FLUID-OUT: can estimate moved since dryrun - stepwise (safety)")
+        return False
+    for n in names:
+        if not PLAN["steps"].get(n, {}).get("ok"):
+            log("FLUID-OUT: knot %s was not OK in dryrun - stepwise" % n)
+            return False
+    goal_L = PLAN["steps"][names[-1]]["goal_L"]
+    T_base = sum(float(PLAN["steps"][s].get("T", 2.5)) for s in names) * 0.6
+    return _move_path_once("fluid-out", qs, T_base, goal_L, R_goal, contact=False, table=True, done_names=names)
+
+
+def merged_contact_move(R_goal):
+    """One contact spline pregrasp->wrap (approach+descend merged). Palm already at standoff. Falls back on refusal.
+    Gated on the dense FLOORS (palm >= table+4 cm, tips >= +2.5 cm on every sample), not the margin number: the move
+    ends at the proven 45 mm wrap, so its margin caps at ~20 by construction and a number gate can never pass (live
+    14 Sep: 19 vs 20 three nights running). End joints are identical to stepwise descend (same q, same correction),
+    so grasp quality is unchanged - only the dogleg path goes away. Slow fine clock + press/settle + guards apply."""
+    if not plan_is_current():
+        log("MERGED-CONTACT: can moved since dryrun - two moves (safety)")
+        return False
+    if "pregrasp" not in PLAN["steps"] or "descend" not in PLAN["steps"]:
+        return False
+    if not PLAN["steps"]["descend"].get("ok"):
+        log("MERGED-CONTACT: descend was not OK - two moves")
+        return False
+    fl = SUMMARY.get("fluid", {}).get("contact", {})
+    if fl and not fl.get("ok"):
+        log("MERGED-CONTACT: dryrun refused the direct hop (%s) - two moves" % fl.get("why"))
+        return False
+    goal_L = PLAN["steps"]["descend"]["goal_L"]
+    qd = np.asarray(PLAN["steps"]["descend"]["q"][ARM], dtype=float)
+    # live start is the current command (at pregrasp); dense is [current, descend] linear via CR(2 knots)
+    st = state()
+    q_cur = (ARMSDK.cmd[ARM].copy() - ARMSDK.ierr) if ARMSDK.cmd is not None else st["q"][ARM].copy()
+    ok = _move_path_once("contact", [q_cur, qd], 1.5, goal_L, R_goal, contact=True, table=True,
+                         done_names=["descend"], min_margin=None)
+    if ok and "approach" in PLAN["steps"] and "approach" not in PLAN["done"]:
+        PLAN["done"].append("approach")  # merged: the approach waypoint was passed through, not stopped at
+    return ok
+
+
+def run_contact_moves(T):
+    """Merged contact with stepwise fallback (approach + descend). True unless frozen. Used by the descend
+    stage and by the --close-at-pregrasp fallback retry."""
+    if not merged_contact_move(R_PALM_DES):
+        log("MERGED-CONTACT failed - two moves")
+        move_palm("approach", stage_goals()["approach"], T["approach"], contact=True)
+        if ARMSDK.frozen:
+            return False
+        move_palm("descend", stage_goals()["descend"], T["descend"], contact=True)
+    return ARMSDK.frozen is None
+
+
+def fluid_park_home():
+    """Fluid park: retreat->ready as one checked spline through the reverse transit joints, then home linear.
+    Never skips to the Cartesian-nearest via; refuses (stepwise park) if the dense path dips or margin < 20 mm.
+    Caller must leave allow_dip False for this spline (from_below would let a 0 mm reverse still start)."""
+    # caller sets allow_dip True (park context). Build reverse chain from PLAN done transit.
+    done = [s for s in PLAN.get("done", []) if s in PLAN["steps"]]
+    transit = [s for s in done if plan_stage_of(s) == "raise" or s.startswith("via")]
+    # need the ready end + vias + current standoff; goal is the ready pose (last raise step)
+    raise_steps = [s for s in PLAN["order"] if plan_stage_of(s) == "raise" and s in PLAN["steps"]]
+    if not raise_steps or not transit:
+        return False
+    ready = raise_steps[-1]
+    # reverse transit from current back to ready: collect transit names up to ready
+    names_fwd, qs_fwd = fluid_transit_knots()
+    if not names_fwd:
+        return False
+    # live reverse knots: [current, ...reversed plan knots back to ready]. names_fwd ends at the last high via
+    # (pregrasp excluded), so the full reverse is used - current (retreat, ~5 mm from hover) flows straight in.
+    st = state()
+    q_cur = (ARMSDK.cmd[ARM].copy() - ARMSDK.ierr) if ARMSDK.cmd is not None else st["q"][ARM].copy()
+    rev_qs = [q_cur] + [np.asarray(PLAN["steps"][s]["q"][ARM], dtype=float) for s in reversed(names_fwd)]
+    # goal = ready pose
+    goal_L = PLAN["steps"][ready]["goal_L"]
+    T_base = sum(float(PLAN["steps"][s].get("T", 2.5)) for s in names_fwd) * 0.6
+    ok = _move_path_once("park-fluid", rev_qs, T_base, goal_L, R_PALM_DES, contact=False, table=True,
+                         done_names=[])
+    if not ok:
+        return False
+    PLAN["done"] = []
+    return True
 
 
 def replay_plan_stage(stage, T, R_goal):
@@ -2824,21 +3394,31 @@ def stage_handshake():
     return stage_step("wrist_yaw", 0.06, 1)
 
 
-def stage_grasp():
-    """thumb across, ramp close with contact freeze (the bench recipe), verdict from the contact map."""
+def stage_grasp(oppose_holder=None):
+    """thumb across, ramp close with contact freeze (the bench recipe), verdict from the contact map.
+    oppose_holder: run_hand_async holder from the overlapped transit (thumb already across) - close only."""
     if args.no_hand:
         log("GRASP skipped (--no-hand)")
         return True
-    ensure_hand_open("grasp")
     oppose_extra = ["--aux-target", "%.2f" % args.aux_target, "--aux-seconds", "1.2"]
     close_extra = ["--ramp-rate", "%.2f" % args.ramp_rate, "--speed", "1.0", "--stall-threshold", "%.2f" % args.stall_threshold,
                     "--squeeze", "%.2f" % args.squeeze, "--hold", "0", "--keep", "--aux-target", "%.2f" % args.aux_target]
-    doc_o = run_hand("oppose", oppose_extra)
-    if HAND_LAST_RC != 0:
-        log("HAND oppose refused - releasing and retrying once")
-        ensure_hand_open("oppose retry")
+    doc_o = None
+    if oppose_holder is not None:
+        rc, doc_o = wait_hand_async(oppose_holder, timeout=15.0)
+        if rc != 0:
+            log("HAND oppose (overlapped) refused rc=%s - releasing and retrying once (blocking)" % rc)
+            ensure_hand_open("oppose retry")
+            doc_o = run_hand("oppose", oppose_extra)
+        time.sleep(0.3)
+    else:
+        ensure_hand_open("grasp")
         doc_o = run_hand("oppose", oppose_extra)
-    time.sleep(0.3)
+        if HAND_LAST_RC != 0:
+            log("HAND oppose refused - releasing and retrying once")
+            ensure_hand_open("oppose retry")
+            doc_o = run_hand("oppose", oppose_extra)
+        time.sleep(0.3)
     doc_c = run_hand("close", close_extra)
     if HAND_LAST_RC != 0:
         log("HAND close refused - releasing and retrying once")
@@ -2873,6 +3453,7 @@ def run_all(info):
     T = {"raise": 3.0, "pregrasp": 3.0, "approach": 2.5, "descend": 1.5, "lift": 2.0, "lower": 2.0, "retreat": 2.0}
     reached = []      # stages completed, for the reverse-out
     grasped = False
+    oppose_holder = None  # --overlap-hand: thumb oppose rides the transit (side thread)
     ensure_hand_open("cycle start")
     for k, name in enumerate(order):
         if k > stop_idx:
@@ -2900,28 +3481,96 @@ def run_all(info):
             if ARMSDK.frozen:
                 break
         elif name == "pregrasp":
-            r = prompt_loop("> PREGRASP: step out over the table (%.0f cm above the top), then down beside the can (%.0f cm off). Enter to go: " % (
-                args.clearance * 100, (args.gap + args.pregrasp_gap - 0.023) * 100))
+            will_close = (args.until is None) or (order.index(args.until) >= order.index("grasp"))
+            do_oppose = args.overlap_hand and not args.no_hand and will_close
+            if args.fluid_transit:
+                names, _qs = fluid_transit_knots()
+                what = ("FLUID-OUT: one motion ready -> %s (no stops%s), then a short hop to the standoff. Raise already done and stays separate. L2+B in hand" % (
+                    " -> ".join(names[1:]) if len(names) > 1 else "hover",
+                    ", thumb opposing on the way" if do_oppose else ""))
+                r = prompt_loop("> %s. Enter to go: " % what)
+            else:
+                r = prompt_loop("> PREGRASP: step out over the table (%.0f cm above the top), then down beside the can (%.0f cm off). Enter to go: " % (
+                    args.clearance * 100, (args.gap + args.pregrasp_gap - 0.023) * 100))
             if r == "park":
                 break
-            if not move_palm("pregrasp", stage_goals()["pregrasp"], T["pregrasp"]):
-                break
+            if do_oppose and oppose_holder is None:
+                oppose_holder = run_hand_async("oppose", ["--aux-target", "%.2f" % args.aux_target, "--aux-seconds", "1.2"])
+            if args.fluid_transit:
+                if fluid_outbound(R_PALM_DES):
+                    # fluid ends at the last HIGH via; one short corrected hop finishes to the standoff (the low
+                    # tail is where lag + thin margin tripped the guard twice - proven 5 mm stepwise)
+                    if plan_is_current() and PLAN["steps"].get("pregrasp", {}).get("ok"):
+                        ps = PLAN["steps"]["pregrasp"]
+                        if not _move_palm_once("pregrasp", ps["goal_L"], T["pregrasp"], R_PALM_DES, False, q_plan=ps["q"]):
+                            break
+                    else:
+                        log("FLUID-OUT ok but pregrasp plan went stale - holding at the high via")
+                        break
+                    if float(args.fluid_settle) > 0 and not ARMSDK.frozen:
+                        t0 = now()
+                        while now() - t0 < float(args.fluid_settle) and not ARMSDK.frozen:
+                            time.sleep(0.1)
+                else:
+                    log("FLUID-OUT failed - falling back to stepwise pregrasp")
+                    if oppose_holder is None and do_oppose:
+                        oppose_holder = run_hand_async("oppose", ["--aux-target", "%.2f" % args.aux_target, "--aux-seconds", "1.2"])
+                    if not move_palm("pregrasp", stage_goals()["pregrasp"], T["pregrasp"]):
+                        break
+            else:
+                if not move_palm("pregrasp", stage_goals()["pregrasp"], T["pregrasp"]):
+                    break
         elif name == "approach":
-            r = prompt_loop("> APPROACH: check the camera - palm face should be %.0f cm from the can, fingers forward, thumb up. Fix with n/j, Enter to move in (+%.0f cm high): " %
-                            ((args.gap + args.pregrasp_gap - 0.023) * 100, args.approach_rise * 100))
-            if r == "park":
-                break
-            move_palm("approach", stage_goals()["approach"], T["approach"], contact=True)
+            if args.close_at_pregrasp:
+                log("APPROACH skipped (--close-at-pregrasp: grasping at the standoff)")
+            elif args.merge_contact:
+                log("APPROACH merged into one contact move (pregrasp->wrap) - no stop here")
+            else:
+                r = prompt_loop("> APPROACH: check the camera - palm face should be %.0f cm from the can, fingers forward, thumb up. Fix with n/j, Enter to move in (+%.0f cm high): " %
+                                ((args.gap + args.pregrasp_gap - 0.023) * 100, args.approach_rise * 100))
+                if r == "park":
+                    break
+                move_palm("approach", stage_goals()["approach"], T["approach"], contact=True)
         elif name == "descend":
-            r = prompt_loop("> DESCEND %.0f cm onto the grasp height (palm should touch the can with a gentle press). Enter: " % (args.approach_rise * 100))
-            if r == "park":
-                break
-            move_palm("descend", stage_goals()["descend"], T["descend"], contact=True)
+            if args.close_at_pregrasp:
+                log("DESCEND skipped (--close-at-pregrasp: grasping at the standoff, contact moves held as fallback)")
+            elif args.merge_contact:
+                r = prompt_loop("> CONTACT: one move standoff -> wrap height (merged approach+descend, %.0f cm). Thumb %s. Enter: " % (
+                    args.approach_rise * 100, "already across" if oppose_holder is not None else "up"))
+                if r == "park":
+                    break
+                if not run_contact_moves(T):
+                    break
+            else:
+                r = prompt_loop("> DESCEND %.0f cm onto the grasp height (palm should touch the can with a gentle press). Enter: " % (args.approach_rise * 100))
+                if r == "park":
+                    break
+                move_palm("descend", stage_goals()["descend"], T["descend"], contact=True)
         elif name == "grasp":
-            r = prompt_loop("> GRASP: thumb across, then ramp-close with contact freeze. Palm on the can? Enter: ")
+            if args.close_at_pregrasp:
+                r = prompt_loop("> GRASP AT STANDOFF: no contact move yet - ramp-close %.0f cm off the can, verdict decides. Enter: " % (
+                    (args.gap + args.pregrasp_gap - 0.023) * 100))
+            elif oppose_holder is not None:
+                r = prompt_loop("> GRASP: thumb already across (overlapped) - ramp-close now. Palm on the can? Enter: ")
+            else:
+                r = prompt_loop("> GRASP: thumb across, then ramp-close with contact freeze. Palm on the can? Enter: ")
             if r == "park":
                 break
-            grasped = stage_grasp()
+            grasped = stage_grasp(oppose_holder=oppose_holder)
+            oppose_holder = None
+            if args.close_at_pregrasp and not grasped and not ARMSDK.frozen:
+                # standoff close missed: open, run the held-back contact moves, close again at the wrap.
+                log("STANDOFF close missed - falling back: release, contact moves, close again")
+                if not args.auto:
+                    r = prompt_loop("> fallback: release + approach/descend + close again. Enter to go, p to park: ")
+                    if r == "park":
+                        stage_release_hand()
+                        grasped = False
+                        break
+                stage_release_hand()
+                if not run_contact_moves(T):
+                    break
+                grasped = stage_grasp(None)
             if not grasped:
                 r = prompt_loop("> contact map is not the can fingerprint. Enter to LIFT anyway, or 'p' to release + park: ")
                 if r == "park":
@@ -2962,6 +3611,12 @@ def run_all(info):
             return
         reached.append(name)
     # ---- stopped early (--until, prompt 'p', or a freeze): reverse out safely ----
+    if oppose_holder is not None and oppose_holder.get("thread") is not None and not oppose_holder.get("done"):
+        # transit broke before grasp: let the overlapped oppose finish (harmless, thumb across, hand empty) so the
+        # background subprocess never outlives the arm session; arm holds its pose (50 Hz) meanwhile.
+        log("waiting for overlapped oppose to finish before parking")
+        wait_hand_async(oppose_holder, timeout=15.0)
+        oppose_holder = None
     if ARMSDK.frozen:
         r = prompt_loop("> FROZEN (%s). Enter = PARK (slow return, weight 0) | 'r' releases weight where it is: " % ARMSDK.frozen)
         park()
@@ -2998,12 +3653,12 @@ else:
         "?" if args.can_x is None else "%.2f" % args.can_x,
         "?" if args.can_y is None else "%.2f" % args.can_y,
         "?" if args.can_z is None else "%.3f" % args.can_z)
-log("G1 ARM+CAN test: %s arm, stage %s, %s, kp/kd %.0f/%.1f, vmax %.2f rad/s, time-scale %.2f%s, fine %.2fx/%.2f (pregrasp/approach/descend/lower), windup %.2f rad%s" %
+log("G1 ARM+CAN test: %s arm, stage %s, %s, kp/kd %.0f/%.1f, vmax %.2f rad/s, time-scale %.2f%s, fine %.2fx/%.2f (approach/descend/lower), via-step %.2f m, hold %.1f s, windup %.2f rad%s" %
     (SIDE, args.stage, can_txt, args.kp, args.kd, args.vmax, args.time_scale,
      "" if args.speed_rung is None else " (speed-rung %d; next is %s)" % (
          args.speed_rung, "done" if args.speed_rung >= max(SPEED_RUNGS) else "%d=%.2fx/%.2f" % (
              args.speed_rung + 1, SPEED_RUNGS[args.speed_rung + 1][0], SPEED_RUNGS[args.speed_rung + 1][1])),
-     args.fine_time_scale, args.fine_vmax, args.windup, (" | " + args.label) if args.label else ""))
+     args.fine_time_scale, args.fine_vmax, float(args.via_step), float(args.hold), args.windup, (" | " + args.label) if args.label else ""))
 
 info = do_check()
 if args.rpc or args.stage == "check":
